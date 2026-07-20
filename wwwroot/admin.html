@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlotSmith — Staff calendar setup</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { padding-bottom: 40px; }
+  .provider-row { display: flex; gap: 10px; margin-top: 10px; }
+  .status-ok { color: #1a7a3c; font-size: 0.85rem; margin-top: 6px; }
+  .banner { margin: 20px; padding: 14px; border-radius: 10px; background: #eafaf0; color: #1a7a3c; font-weight: 600; }
+</style>
+</head>
+<body>
+<header class="topbar"><strong>Staff calendar setup</strong></header>
+<main>
+  <h1 class="step-title">Connect your calendar</h1>
+  <p style="margin:0 20px;color:var(--muted)">
+    Link your Google or Outlook calendar so the booking system can see your existing
+    appointments and avoid double-booking, and add confirmed bookings straight to your calendar.
+  </p>
+  <div id="banner"></div>
+  <div id="staffList"></div>
+</main>
+<script>
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function load() {
+  const staff = await api('/api/staff');
+  const params = new URLSearchParams(location.search);
+  if (params.get('connected')) {
+    document.getElementById('banner').innerHTML =
+      `<div class="banner">Connected ${params.get('connected')} calendar for staff #${params.get('staffId')}.</div>`;
+  }
+
+  const list = document.getElementById('staffList');
+  for (const s of staff) {
+    const id = s.staffId ?? s.StaffId;
+    const name = s.displayName ?? s.DisplayName;
+    const status = await api(`/api/calendar/status?staffId=${id}`);
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    const connectedProviders = status.map(c => c.provider ?? c.Provider);
+    card.innerHTML = `
+      <div class="avatar">${name.slice(0,2).toUpperCase()}</div>
+      <div class="card-body">
+        <div class="card-title">${name}</div>
+        <div class="provider-row">
+          <button class="pill-btn" onclick="location.href='/api/calendar/Google/connect?staffId=${id}'">
+            ${connectedProviders.includes('Google') ? 'Reconnect Google' : 'Connect Google'}
+          </button>
+          <button class="pill-btn" onclick="location.href='/api/calendar/Microsoft/connect?staffId=${id}'">
+            ${connectedProviders.includes('Microsoft') ? 'Reconnect Outlook' : 'Connect Outlook'}
+          </button>
+        </div>
+        ${status.map(c => `<div class="status-ok">&#10003; ${c.provider ?? c.Provider} connected (${c.externalAccountEmail ?? c.ExternalAccountEmail ?? 'unknown account'})</div>`).join('')}
+      </div>`;
+    list.appendChild(card);
+  }
+}
+load();
+</script>
+</body>
+</html>
