@@ -236,10 +236,17 @@ function renderDetailsStep() {
   const form = document.createElement('form');
   form.className = 'details-form';
   form.innerHTML = `
-    <input name="name" placeholder="Full name" required value="${state.customer.name}">
-    <input name="email" type="email" placeholder="Email" required value="${state.customer.email}">
-    <input name="phone" placeholder="Phone (optional)" value="${state.customer.phone}">
-    <textarea name="notes" placeholder="Notes for your stylist (optional)" rows="3">${state.customer.notes}</textarea>
+    <label for="field-name">Full name</label>
+    <input id="field-name" name="name" autocomplete="name" required value="${state.customer.name}">
+
+    <label for="field-email">Email</label>
+    <input id="field-email" name="email" type="email" autocomplete="email" required value="${state.customer.email}">
+
+    <label for="field-phone">Phone (optional)</label>
+    <input id="field-phone" name="phone" type="tel" autocomplete="tel" value="${state.customer.phone}">
+
+    <label for="field-notes">Notes for your stylist (optional)</label>
+    <textarea id="field-notes" name="notes" rows="3">${state.customer.notes}</textarea>
   `;
   form.addEventListener('input', () => {
     state.customer.name = form.name.value;

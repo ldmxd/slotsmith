@@ -129,6 +129,26 @@ works without it.
    admin consent; a work/school tenant might.
 4. `Calendar__Microsoft__ClientId`, `Calendar__Microsoft__ClientSecret` env vars in production.
 
+## Email confirmations (Resend)
+
+Booking confirmations send via [Resend](https://resend.com), same provider and same account
+already used by `OceanSwimmer.Api` — same `SendResendEmailAsync` pattern (plain REST call, no
+SDK), just a different `Resend:ApiKey` / `FromEmail` / `FromName` config.
+
+- Without an API key configured, `Program.cs` logs the confirmation to the console instead of
+  sending — local dev works with zero setup.
+- `FromEmail` defaults to `noreply@mihoknows.com.au`, but **that domain needs to be verified as
+  a sending domain in Resend** (Resend dashboard → Domains → Add Domain → add the DNS
+  TXT/CNAME/MX records it gives you) before mail from that address will actually deliver. Until
+  that's done, you can point `FromEmail` at `noreply@oceanswimmer.com.au` instead (already
+  verified) to test the flow end to end.
+- Config keys: `Resend:ApiKey`, `Resend:FromEmail`, `Resend:FromName` — same
+  double-underscore env var pattern as the calendar secrets in production
+  (`Resend__ApiKey`, etc).
+- SMS confirmations aren't implemented — email covers the demo. If it's wanted later, Twilio
+  works but ClickSend/MessageMedia are Australian companies with simpler local pricing, worth
+  a look first.
+
 ## Testing both providers side by side
 
 Since staff link their own calendar individually (`/admin.html`), you can genuinely test both
@@ -156,6 +176,7 @@ sudo docker run -d \
   -e Calendar__Google__ClientSecret="<...>" \
   -e Calendar__Microsoft__ClientId="<...>" \
   -e Calendar__Microsoft__ClientSecret="<...>" \
+  -e Resend__ApiKey="<...>" \
   slotsmith-web
 ```
 
@@ -197,4 +218,5 @@ same as any other subdomain.
 - Get ATSI's real service menu and pricing from the owner before demoing
 - Decide on payment / no-show handling before pitching this as a serious Fresha replacement
 - Harden the "no preference" staff assignment against double-booking races
-- Add SMS/email confirmation (currently the front-end just claims one was sent)
+- Verify `mihoknows.com.au` as a sending domain in Resend so confirmation emails come from the
+  right address instead of borrowing `oceanswimmer.com.au`

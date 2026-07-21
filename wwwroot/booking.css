@@ -123,7 +123,14 @@ h2.section-title {
   font-weight: 600;
 }
 .slot-btn.selected { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-form.details-form { margin: 0 20px; display: flex; flex-direction: column; gap: 12px; }
+form.details-form { margin: 0 20px; display: flex; flex-direction: column; gap: 4px; }
+form.details-form label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 10px;
+}
+form.details-form label:first-child { margin-top: 0; }
 form.details-form input, form.details-form textarea {
   padding: 12px 14px;
   border-radius: 10px;

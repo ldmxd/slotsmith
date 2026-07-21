@@ -4,6 +4,8 @@ using SlotSmith.Api.Calendar;
 using SlotSmith.Api.Data;
 using SlotSmith.Api.Models;
 using SlotSmith.Api.Services;
+using System.Net.Http.Headers;
+using System.Text.Json;
 
 // ── Config ───────────────────────────────────────────────────────────────
 var connStr = Environment.GetEnvironmentVariable("SLOTSMITH_SQL");
@@ -169,7 +171,26 @@ app.MapPost("/api/bookings", async (CreateBookingRequest req, BookingRepository 
     var bookingId = await repo.CreateBookingAsync(
         customerId, chosen.StaffId, req.StartUtc, endUtc, calendarProvider, calendarEventId, req.Notes, items);
 
-    return Results.Ok(new { BookingId = bookingId, StaffId = chosen.StaffId, req.StartUtc, EndUtc = endUtc, CalendarConnected = calendarProvider is not null });
+    var confirmationSent = false;
+    try
+    {
+        var allStaff = await repo.GetActiveStaffAsync();
+        var allServices = await repo.GetActiveServicesAsync();
+        var staffName = allStaff.FirstOrDefault(s => s.StaffId == chosen.StaffId)?.DisplayName ?? "your stylist";
+        var serviceNames = allServices.Where(s => serviceIds.Contains(s.ServiceId)).Select(s => s.Name).ToList();
+
+        await SendBookingConfirmationEmailAsync(
+            builder.Configuration, req.CustomerEmail, req.CustomerName, staffName, serviceNames,
+            req.StartUtc, endUtc, venueTimeZone, chosen.TotalPriceCents);
+        confirmationSent = true;
+    }
+    catch (Exception ex)
+    {
+        // Don't fail the booking just because the confirmation email couldn't be sent.
+        Console.WriteLine($"[Resend] Failed to send booking confirmation: {ex.Message}");
+    }
+
+    return Results.Ok(new { BookingId = bookingId, StaffId = chosen.StaffId, req.StartUtc, EndUtc = endUtc, CalendarConnected = calendarProvider is not null, ConfirmationSent = confirmationSent });
 });
 
 // ── Calendar OAuth (admin-side: staff linking their own calendar) ─────────
@@ -197,6 +218,71 @@ app.MapGet("/api/calendar/status", async (int staffId, BookingRepository repo) =
 });
 
 app.Run();
+
+// ── Email (Resend) ──────────────────────────────────────────────────────
+// Same provider/pattern as OceanSwimmer.Api — plain REST call, no SDK. Reuses the same
+// Resend account; only the API key + from-address need to be set per deployment.
+
+async Task SendBookingConfirmationEmailAsync(
+    IConfiguration config, string toEmail, string customerName, string staffName,
+    List<string> serviceNames, DateTime startUtc, DateTime endUtc, TimeZoneInfo venueTimeZone, int totalPriceCents)
+{
+    var apiKey    = config["Resend:ApiKey"];
+    var fromEmail = config["Resend:FromEmail"] ?? "noreply@mihoknows.com.au";
+    var fromName  = config["Resend:FromName"]  ?? "SlotSmith Bookings";
+
+    var startLocal = TimeZoneInfo.ConvertTimeFromUtc(startUtc, venueTimeZone);
+    var whenText = startLocal.ToString("dddd d MMMM, h:mm tt");
+    var servicesText = string.Join(", ", serviceNames);
+    var priceText = (totalPriceCents / 100m).ToString("C");
+
+    if (string.IsNullOrWhiteSpace(apiKey) || apiKey.StartsWith("YOUR_"))
+    {
+        // Resend not configured — log instead, so local dev still works without a live key.
+        Console.WriteLine($"[DEV] Booking confirmation for {toEmail}: {servicesText} with {staffName} on {whenText} ({priceText})");
+        return;
+    }
+
+    await SendResendEmailAsync(apiKey, fromEmail, fromName, toEmail,
+        subject: "Your booking is confirmed",
+        text: $"Hi {customerName},\n\nYour booking is confirmed:\n\n{servicesText}\nWith {staffName}\n{whenText}\nTotal: {priceText}\n\nSee you then!",
+        html: $@"
+            <p>Hi {customerName},</p>
+            <p>Your booking is confirmed:</p>
+            <table style=""margin:16px 0;font-size:15px;"">
+                <tr><td style=""color:#888;padding-right:12px;"">Service</td><td>{servicesText}</td></tr>
+                <tr><td style=""color:#888;padding-right:12px;"">With</td><td>{staffName}</td></tr>
+                <tr><td style=""color:#888;padding-right:12px;"">When</td><td>{whenText}</td></tr>
+                <tr><td style=""color:#888;padding-right:12px;"">Total</td><td>{priceText}</td></tr>
+            </table>
+            <p style=""color:#888;font-size:13px;"">See you then!</p>");
+}
+
+async Task SendResendEmailAsync(string apiKey, string fromEmail, string fromName,
+    string toEmail, string subject, string text, string html)
+{
+    using var http = new HttpClient();
+    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+    var payload = JsonSerializer.Serialize(new
+    {
+        from    = $"{fromName} <{fromEmail}>",
+        to      = new[] { toEmail },
+        subject,
+        text,
+        html
+    });
+
+    var response = await http.PostAsync(
+        "https://api.resend.com/emails",
+        new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
+
+    if (!response.IsSuccessStatusCode)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"[Resend] Error {(int)response.StatusCode}: {body}");
+    }
+}
 
 record AvailabilityRequest(List<int> ServiceIds, int? StaffId, string Date);
 record AvailabilityResponseSlot(int StaffId, DateTime StartUtc, DateTime EndUtc, int TotalPriceCents, int TotalDurationMinutes);
