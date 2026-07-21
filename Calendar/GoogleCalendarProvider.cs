@@ -84,7 +84,8 @@ public class GoogleCalendarProvider : ICalendarProvider
             ExternalAccountEmail: email,
             AccessTokenEncrypted: _protector.Protect(token.AccessToken!),
             RefreshTokenEncrypted: _protector.Protect(token.RefreshToken ?? ""),
-            TokenExpiresUtc: DateTime.UtcNow.AddSeconds(token.ExpiresIn));
+            TokenExpiresUtc: DateTime.UtcNow.AddSeconds(token.ExpiresIn),
+            ConnectedAt: DateTime.UtcNow);
     }
 
     private async Task<string?> GetAccountEmailAsync(string accessToken, CancellationToken ct)

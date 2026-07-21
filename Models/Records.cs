@@ -30,7 +30,8 @@ public record CalendarConnection(
     string? ExternalAccountEmail,
     string AccessTokenEncrypted,
     string RefreshTokenEncrypted,
-    DateTime TokenExpiresUtc);
+    DateTime TokenExpiresUtc,
+    DateTime ConnectedAt);
 
 // ── API request/response shapes ─────────────────────────────────────────
 
