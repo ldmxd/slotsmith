@@ -229,9 +229,46 @@ function renderTimeStep() {
 
 // ── Step: details + confirm ─────────────────────────────────────────────
 
+function renderBookingSummary() {
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.style.flexDirection = 'column';
+  box.style.alignItems = 'stretch';
+
+  const services = selectedServices();
+  const serviceNames = services.map(s => s.name ?? s.Name).join(', ');
+
+  const staffId = state.selectedSlot.staffId ?? state.selectedSlot.StaffId;
+  const staffMember = state.staff.find(s => (s.staffId ?? s.StaffId) === staffId);
+  const staffName = staffMember ? (staffMember.displayName ?? staffMember.DisplayName) : 'Any available stylist';
+
+  const start = new Date(state.selectedSlot.startUtc ?? state.selectedSlot.StartUtc);
+  const whenText = start.toLocaleString([], { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' });
+
+  const { totalPrice } = cartSummary();
+
+  box.innerHTML = `
+    <div style="display:flex;justify-content:space-between;padding:4px 0;">
+      <span style="color:var(--muted)">Service</span><span style="font-weight:600;text-align:right;">${serviceNames}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:4px 0;">
+      <span style="color:var(--muted)">With</span><span style="font-weight:600;">${staffName}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:4px 0;">
+      <span style="color:var(--muted)">When</span><span style="font-weight:600;text-align:right;">${whenText}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:4px 0;">
+      <span style="color:var(--muted)">Total</span><span style="font-weight:600;">from ${fmtMoney(totalPrice)}</span>
+    </div>
+  `;
+  return box;
+}
+
 function renderDetailsStep() {
   const el = document.createElement('div');
   el.appendChild(h1('Your details'));
+  el.appendChild(renderBookingSummary());
+  el.appendChild(h2('Contact details'));
 
   const form = document.createElement('form');
   form.className = 'details-form';
@@ -248,12 +285,17 @@ function renderDetailsStep() {
     <label for="field-notes">Notes for your stylist (optional)</label>
     <textarea id="field-notes" name="notes" rows="3">${state.customer.notes}</textarea>
   `;
-  form.addEventListener('input', () => {
+  const syncFormState = () => {
     state.customer.name = form.name.value;
     state.customer.email = form.email.value;
     state.customer.phone = form.phone.value;
     state.customer.notes = form.notes.value;
-  });
+    updateContinueDisabled();
+  };
+  // Some browsers' autofill only fires 'change', not 'input' — listen for both so the
+  // Confirm button reliably unlocks whether the user typed or autofilled.
+  form.addEventListener('input', syncFormState);
+  form.addEventListener('change', syncFormState);
   form.addEventListener('submit', e => e.preventDefault());
   el.appendChild(form);
   return el;
@@ -299,6 +341,14 @@ function renderConfirmedStep() {
 function h1(text) { const e = document.createElement('h1'); e.className = 'step-title'; e.textContent = text; return e; }
 function h2(text) { const e = document.createElement('h2'); e.className = 'section-title'; e.textContent = text; return e; }
 
+function updateContinueDisabled() {
+  continueBtn.disabled =
+    (state.step === 'services' && state.selectedServiceIds.size === 0) ||
+    (state.step === 'professional' && state.selectedStaffId === null) ||
+    (state.step === 'time' && !state.selectedSlot) ||
+    (state.step === 'details' && (!state.customer.name || !state.customer.email));
+}
+
 function render() {
   app.innerHTML = '';
   backBtn.style.visibility = state.step === 'services' ? 'hidden' : 'visible';
@@ -313,11 +363,7 @@ function render() {
     cartBar.style.display = 'none';
   } else {
     updateCartBar();
-    continueBtn.disabled =
-      (state.step === 'services' && state.selectedServiceIds.size === 0) ||
-      (state.step === 'professional' && state.selectedStaffId === null) ||
-      (state.step === 'time' && !state.selectedSlot) ||
-      (state.step === 'details' && (!state.customer.name || !state.customer.email));
+    updateContinueDisabled();
   }
 }
 
