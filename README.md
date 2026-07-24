@@ -348,28 +348,47 @@ mihoknows. Same Docker pattern as `DrinksExpress.Web`. Next free port: **8084**.
 cd /var/www
 sudo git clone https://github.com/ldmxd/slotsmith.git
 cd slotsmith
+sudo mkdir -p /var/www/slotsmith-uploads
 
 sudo docker build -t slotsmith-web .
+```
+
+Secrets live in an env file *outside* the git repo (`/var/www/slotsmith.env`, `chmod 600`), not
+inline on the `docker run` command — keeps them out of shell history and makes redeploys not
+require retyping them:
+
+```
+SLOTSMITH_SQL=Server=sqlserver,1433;Database=SlotSmith;User Id=sa;Password=<password>;TrustServerCertificate=True
+Admin__Password=<...>
+Resend__ApiKey=<...>
+Calendar__Google__ClientId=<...>
+Calendar__Google__ClientSecret=<...>
+Calendar__Microsoft__ClientId=<...>
+Calendar__Microsoft__ClientSecret=<...>
+```
+
+No quotes around values — `--env-file` doesn't do shell parsing, so quotes would become part of
+the literal value. Omit any `Calendar__*` lines entirely for a provider you're not using yet.
+
+```bash
 sudo docker run -d \
   --name slotsmith-web \
   --restart unless-stopped \
   --network oceanswimmer_default \
   -p 127.0.0.1:8084:8080 \
   -v /var/www/slotsmith-uploads:/app/wwwroot/uploads \
-  -e SLOTSMITH_SQL="Server=sqlserver,1433;Database=SlotSmith;User Id=sa;Password=<password>;TrustServerCertificate=True" \
-  -e Admin__Password="<...>" \
-  -e Calendar__Google__ClientId="<...>" \
-  -e Calendar__Google__ClientSecret="<...>" \
-  -e Calendar__Microsoft__ClientId="<...>" \
-  -e Calendar__Microsoft__ClientSecret="<...>" \
-  -e Resend__ApiKey="<...>" \
+  -v /var/www/slotsmith-keys:/app/keys \
+  --env-file /var/www/slotsmith.env \
   slotsmith-web
 ```
 
-The `-v` mount matters: staff photos uploaded via `staff-admin.html` get written to
-`wwwroot/uploads/staff` inside the container. Without that mount, every redeploy (`docker build`
+Both `-v` mounts matter. Staff photos uploaded via `staff-admin.html` get written to
+`wwwroot/uploads/staff` inside the container — without that mount, every redeploy (`docker build`
 + fresh `docker run`) wipes them, since the rebuilt image starts from the Dockerfile's `COPY`
-again with nothing in that folder.
+again with nothing in that folder. `keys` holds the ASP.NET Core Data Protection keys
+(`Program.cs`: `PersistKeysToFileSystem`) used to encrypt calendar OAuth tokens at rest — without
+that mount, every redeploy generates a fresh key and silently breaks decryption of any
+already-connected staff calendar (they'd need to reconnect via `admin.html`).
 
 New server block, `/etc/nginx/sites-available/slotsmith`:
 

@@ -110,7 +110,9 @@ async function load() {
     card.style.flexDirection = 'column';
     card.style.alignItems = 'stretch';
     const connectedProviders = status.map(c => c.provider ?? c.Provider);
-    const avatarInner = photoUrl ? `<img src="${photoUrl}" alt="${name}">` : name.slice(0,2).toUpperCase();
+    const avatarInner = photoUrl
+      ? `<img src="${photoUrl}" alt="${name}" onerror="this.outerHTML='${name.slice(0,2).toUpperCase()}'">`
+      : name.slice(0,2).toUpperCase();
     card.innerHTML = `
       <div style="display:flex;align-items:center;gap:14px;">
         <div class="avatar">${avatarInner}</div>

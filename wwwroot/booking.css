@@ -86,7 +86,10 @@ h2.section-title {
   transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
 .card.selectable { cursor: pointer; }
-.card.selectable:hover { box-shadow: var(--shadow-md); border-color: #d8d3cb; }
+/* :not(.selected) matters here — without it, hovering a selected card (very likely on the exact
+   card you just tapped) let the plain hover border/shadow outrank .card.selected below since
+   both rules matched at similar specificity, hiding the selection until the mouse moved away. */
+.card.selectable:not(.selected):hover { box-shadow: var(--shadow-md); border-color: #d8d3cb; }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-md); }
 .avatar {
   width: 52px;
@@ -125,16 +128,57 @@ h2.section-title {
 .pill-btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
 .pill-btn.primary:hover { background: #333; }
 
-/* ── Selection dots ─────────────────────────────────────────────────── */
+/* ── Service selection checkboxes ──────────────────────────────────────
+   Square with a checkmark, not round — services allow picking more than one,
+   and a round dot reads as a radio button (pick-one), which is the wrong signal
+   here. See .radio-dot below for the single-select equivalent used on the
+   professional step. */
 .checkbox-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.checkbox-dot.checked { background: var(--accent); border-color: var(--accent); }
+.checkbox-dot.checked::after {
+  content: '';
+  width: 6px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+/* ── Professional selection radio dots ──────────────────────────────────
+   Round ring with a filled center dot, not a checkmark — professional is a
+   single-select step (pick one, or "no preference"), which is exactly what a
+   radio button conventionally signals. Kept as a distinct class from
+   .checkbox-dot so the two shapes (and their selection semantics) never get
+   mixed up. */
+.radio-dot {
   width: 22px;
   height: 22px;
   border-radius: 50%;
   border: 2px solid var(--border);
   flex-shrink: 0;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease;
 }
-.checkbox-dot.checked { background: var(--accent); border-color: var(--accent); }
+.radio-dot.checked { border-color: var(--accent); }
+.radio-dot.checked::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 
 /* ── Sticky cart bar ────────────────────────────────────────────────── */
 .cart-bar {
@@ -164,6 +208,77 @@ h2.section-title {
 .cart-bar button:hover:not(:disabled) { background: #333; }
 .cart-bar button:active:not(:disabled) { transform: scale(0.98); }
 .cart-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Inline calendar date picker (time step) ──────────────────────────
+   Embedded on the page instead of the native browser date-picker popup, so
+   it's visible without an extra click and time slots can render directly
+   below whichever day is picked. */
+.calendar-widget {
+  margin: 0 20px 20px;
+  max-width: 380px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--shadow-sm);
+}
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.calendar-month-label { font-weight: 700; font-size: 1rem; }
+.calendar-nav-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+.calendar-nav-btn:hover { background: var(--border); }
+.calendar-weekdays, .calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.calendar-weekdays { margin-bottom: 4px; }
+.calendar-weekdays div {
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 4px 0;
+}
+.calendar-grid { row-gap: 4px; }
+.calendar-day {
+  aspect-ratio: 1;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.calendar-day-blank { cursor: default; }
+.calendar-day:not(.past):not(.selected):hover { background: var(--panel); }
+.calendar-day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.calendar-day.selected { background: var(--accent); color: var(--accent-ink); }
+.calendar-day.past { color: #cfc9c0; cursor: not-allowed; }
 
 /* ── Time slots ─────────────────────────────────────────────────────── */
 .slots-grid {

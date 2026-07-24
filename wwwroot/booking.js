@@ -43,7 +43,11 @@ function initials(name) {
 }
 
 function avatarHtml(name, photoUrl) {
-  return photoUrl ? `<img src="${photoUrl}" alt="${name}">` : initials(name);
+  // onerror falls back to plain initials if the photo file is missing (e.g. a database restore
+  // that didn't bring the uploads folder with it) instead of showing a broken-image icon.
+  return photoUrl
+    ? `<img src="${photoUrl}" alt="${name}" onerror="this.outerHTML='${initials(name)}'">`
+    : initials(name);
 }
 
 async function api(path, opts) {
@@ -174,6 +178,7 @@ function renderProfessionalStep() {
   const noPref = document.createElement('div');
   noPref.className = 'card selectable' + (state.selectedStaffId === 0 ? ' selected' : '');
   noPref.innerHTML = `
+    <div class="radio-dot ${state.selectedStaffId === 0 ? 'checked' : ''}"></div>
     <div class="avatar">&#8646;</div>
     <div class="card-body">
       <div class="card-title">No preference</div>
@@ -190,6 +195,7 @@ function renderProfessionalStep() {
     const card = document.createElement('div');
     card.className = 'card selectable' + (state.selectedStaffId === id ? ' selected' : '');
     card.innerHTML = `
+      <div class="radio-dot ${state.selectedStaffId === id ? 'checked' : ''}"></div>
       <div class="avatar">${avatarHtml(name, photoUrl)}</div>
       <div class="card-body">
         <div class="card-title">${name}</div>
@@ -215,21 +221,117 @@ async function loadAvailability() {
   });
 }
 
-function renderTimeStep() {
-  const el = document.createElement('div');
-  el.appendChild(h1('Select a time'));
+// Inline month calendar for picking a date, instead of the native browser
+// date-picker popup — it stays visible on the page (no extra click to open
+// it) and time slots for the picked day render straight below it. Which
+// month is currently displayed is kept in state.calendarView* so paging to
+// a different month survives the re-renders that happen when a slot is
+// picked (render() rebuilds this widget from scratch every time).
+function buildCalendarWidget() {
+  const todayStr = todayLocalDateInputValue();
+  const [selYear, selMonth] = state.selectedDate.split('-').map(Number);
 
-  const dateInput = document.createElement('input');
-  dateInput.type = 'date';
-  dateInput.value = state.selectedDate;
-  dateInput.style.margin = '0 20px 16px';
-  dateInput.addEventListener('change', async () => {
-    state.selectedDate = dateInput.value;
-    state.selectedSlot = null;
-    await loadAvailability();
+  if (state.calendarViewYear == null) {
+    state.calendarViewYear = selYear;
+    state.calendarViewMonth = selMonth; // 1-12
+  }
+  const viewYear = state.calendarViewYear;
+  const viewMonth = state.calendarViewMonth;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'calendar-widget';
+
+  const header = document.createElement('div');
+  header.className = 'calendar-header';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'calendar-nav-btn';
+  prevBtn.textContent = '‹';
+  prevBtn.setAttribute('aria-label', 'Previous month');
+  prevBtn.addEventListener('click', () => {
+    let m = viewMonth - 1, y = viewYear;
+    if (m < 1) { m = 12; y -= 1; }
+    state.calendarViewMonth = m;
+    state.calendarViewYear = y;
     render();
   });
-  el.appendChild(dateInput);
+
+  const monthLabel = document.createElement('div');
+  monthLabel.className = 'calendar-month-label';
+  monthLabel.textContent = new Date(viewYear, viewMonth - 1, 1)
+    .toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'calendar-nav-btn';
+  nextBtn.textContent = '›';
+  nextBtn.setAttribute('aria-label', 'Next month');
+  nextBtn.addEventListener('click', () => {
+    let m = viewMonth + 1, y = viewYear;
+    if (m > 12) { m = 1; y += 1; }
+    state.calendarViewMonth = m;
+    state.calendarViewYear = y;
+    render();
+  });
+
+  header.appendChild(prevBtn);
+  header.appendChild(monthLabel);
+  header.appendChild(nextBtn);
+  wrap.appendChild(header);
+
+  const weekdays = document.createElement('div');
+  weekdays.className = 'calendar-weekdays';
+  for (const d of ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']) {
+    const cell = document.createElement('div');
+    cell.textContent = d;
+    weekdays.appendChild(cell);
+  }
+  wrap.appendChild(weekdays);
+
+  const grid = document.createElement('div');
+  grid.className = 'calendar-grid';
+
+  const firstOfMonth = new Date(viewYear, viewMonth - 1, 1);
+  const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const leadingBlanks = (firstOfMonth.getDay() + 6) % 7; // Mon-first: 0=Mon..6=Sun
+
+  for (let i = 0; i < leadingBlanks; i++) {
+    const blank = document.createElement('div');
+    blank.className = 'calendar-day calendar-day-blank';
+    grid.appendChild(blank);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'calendar-day';
+    btn.textContent = String(day);
+    if (dateStr === todayStr) btn.classList.add('today');
+    if (dateStr === state.selectedDate) btn.classList.add('selected');
+    if (dateStr < todayStr) {
+      btn.disabled = true;
+      btn.classList.add('past');
+    } else {
+      btn.addEventListener('click', async () => {
+        state.selectedDate = dateStr;
+        state.selectedSlot = null;
+        await loadAvailability();
+        render();
+      });
+    }
+    grid.appendChild(btn);
+  }
+  wrap.appendChild(grid);
+
+  return wrap;
+}
+
+function renderTimeStep() {
+  const el = document.createElement('div');
+  el.appendChild(h1('Select a date/time'));
+  el.appendChild(buildCalendarWidget());
 
   if (state.slots.length === 0) {
     const empty = document.createElement('div');
@@ -239,6 +341,7 @@ function renderTimeStep() {
     return el;
   }
 
+  el.appendChild(h2('Available times'));
   const grid = document.createElement('div');
   grid.className = 'slots-grid';
   for (const slot of state.slots) {

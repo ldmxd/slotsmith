@@ -98,9 +98,10 @@ async function loadStaff() {
     const card = document.createElement('div');
     card.className = 'card staff-card' + (s.isActive ? '' : ' inactive');
 
+    const initials = (s.displayName || '?').slice(0, 2).toUpperCase();
     const avatarInner = s.photoUrl
-      ? `<img src="${s.photoUrl}" alt="${s.displayName}">`
-      : (s.displayName || '?').slice(0, 2).toUpperCase();
+      ? `<img src="${s.photoUrl}" alt="${s.displayName}" onerror="this.outerHTML='${initials}'">`
+      : initials;
 
     card.innerHTML = `
       <div class="row1">
