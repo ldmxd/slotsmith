@@ -12,7 +12,6 @@
   .field-row .value { font-weight: 600; text-align: right; }
   .actions { margin: 24px 20px; display: flex; gap: 10px; flex-wrap: wrap; }
   .cancelled-note { margin: 20px; padding: 14px; border-radius: 10px; background: var(--panel); color: var(--muted); }
-  #rescheduleForm input[type=date] { padding: 10px; border-radius: 8px; border: 1px solid var(--border); margin: 0 20px 12px; }
 </style>
 </head>
 <body>
@@ -115,7 +114,7 @@ function render() {
     </div>
     <div id="rescheduleForm" style="display:none;">
       <h2 class="section-title">Pick a new time</h2>
-      <input type="date" id="rescheduleDate" value="${rescheduleDate}" min="${toLocalDateInputValue(new Date().toISOString())}">
+      <div id="rescheduleCalendar"></div>
       <div id="slotsContainer"></div>
       <div class="actions">
         <button class="pill-btn primary" id="confirmRescheduleBtn" disabled>Confirm new time</button>
@@ -127,14 +126,10 @@ function render() {
     </div>
   `;
 
+  refreshCalendar();
+
   document.getElementById('rescheduleBtn').onclick = async () => {
     document.getElementById('rescheduleForm').style.display = 'block';
-    await loadRescheduleSlots();
-  };
-
-  document.getElementById('rescheduleDate').onchange = async (e) => {
-    rescheduleDate = e.target.value;
-    selectedSlot = null;
     await loadRescheduleSlots();
   };
 
@@ -166,6 +161,120 @@ function render() {
       document.getElementById('banner').innerHTML = `<div class="banner error">Couldn't cancel: ${err.message}</div>`;
     }
   };
+}
+
+// Same inline month-calendar widget used on the main booking flow (booking.js), rebuilt here
+// since this page is a separate script and doesn't share that module's state. Kept in sync with
+// booking.js's version — if one changes visually, check the other.
+let calendarViewYear = null;
+let calendarViewMonth = null;
+
+function buildCalendarWidget() {
+  const todayStr = toLocalDateInputValue(new Date().toISOString());
+  const [selYear, selMonth] = rescheduleDate.split('-').map(Number);
+
+  if (calendarViewYear == null) {
+    calendarViewYear = selYear;
+    calendarViewMonth = selMonth; // 1-12
+  }
+  const viewYear = calendarViewYear;
+  const viewMonth = calendarViewMonth;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'calendar-widget';
+
+  const header = document.createElement('div');
+  header.className = 'calendar-header';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'calendar-nav-btn';
+  prevBtn.textContent = '‹';
+  prevBtn.setAttribute('aria-label', 'Previous month');
+  prevBtn.addEventListener('click', () => {
+    let m = viewMonth - 1, y = viewYear;
+    if (m < 1) { m = 12; y -= 1; }
+    calendarViewMonth = m;
+    calendarViewYear = y;
+    refreshCalendar();
+  });
+
+  const monthLabel = document.createElement('div');
+  monthLabel.className = 'calendar-month-label';
+  monthLabel.textContent = new Date(viewYear, viewMonth - 1, 1)
+    .toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'calendar-nav-btn';
+  nextBtn.textContent = '›';
+  nextBtn.setAttribute('aria-label', 'Next month');
+  nextBtn.addEventListener('click', () => {
+    let m = viewMonth + 1, y = viewYear;
+    if (m > 12) { m = 1; y += 1; }
+    calendarViewMonth = m;
+    calendarViewYear = y;
+    refreshCalendar();
+  });
+
+  header.appendChild(prevBtn);
+  header.appendChild(monthLabel);
+  header.appendChild(nextBtn);
+  wrap.appendChild(header);
+
+  const weekdays = document.createElement('div');
+  weekdays.className = 'calendar-weekdays';
+  for (const d of ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']) {
+    const cell = document.createElement('div');
+    cell.textContent = d;
+    weekdays.appendChild(cell);
+  }
+  wrap.appendChild(weekdays);
+
+  const grid = document.createElement('div');
+  grid.className = 'calendar-grid';
+
+  const firstOfMonth = new Date(viewYear, viewMonth - 1, 1);
+  const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const leadingBlanks = (firstOfMonth.getDay() + 6) % 7; // Mon-first: 0=Mon..6=Sun
+
+  for (let i = 0; i < leadingBlanks; i++) {
+    const blank = document.createElement('div');
+    blank.className = 'calendar-day calendar-day-blank';
+    grid.appendChild(blank);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'calendar-day';
+    btn.textContent = String(day);
+    if (dateStr === todayStr) btn.classList.add('today');
+    if (dateStr === rescheduleDate) btn.classList.add('selected');
+    if (dateStr < todayStr) {
+      btn.disabled = true;
+      btn.classList.add('past');
+    } else {
+      btn.addEventListener('click', async () => {
+        rescheduleDate = dateStr;
+        selectedSlot = null;
+        refreshCalendar();
+        await loadRescheduleSlots();
+      });
+    }
+    grid.appendChild(btn);
+  }
+  wrap.appendChild(grid);
+
+  return wrap;
+}
+
+function refreshCalendar() {
+  const container = document.getElementById('rescheduleCalendar');
+  if (!container) return;
+  container.innerHTML = '';
+  container.appendChild(buildCalendarWidget());
 }
 
 async function loadRescheduleSlots() {
