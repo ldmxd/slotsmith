@@ -30,4 +30,9 @@ public interface ICalendarProvider
 
     /// <summary>Refresh an expired access token, returning the updated connection (caller persists it).</summary>
     Task<CalendarConnection> RefreshTokenAsync(CalendarConnection connection, CancellationToken ct = default);
+
+    /// <summary>List the calendars on this account, so the staff member can pick which one SlotSmith
+    /// should read busy times from / write bookings to — accounts commonly have more than one
+    /// (e.g. a personal one and a separate work one).</summary>
+    Task<List<CalendarOption>> ListCalendarsAsync(CalendarConnection connection, CancellationToken ct = default);
 }

@@ -1,10 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>SlotSmith.Api</RootNamespace>
+    <UserSecretsId>e0d2e23e-7b63-4c2d-ba71-2d97bb6a23c0</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

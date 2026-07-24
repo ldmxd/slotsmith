@@ -1,13 +1,17 @@
 // Minimal, dependency-free booking flow: services -> professional -> time -> details -> confirmed.
 // Mirrors the Fresha flow this is meant to replace. Talks to the API defined in Program.cs.
 
+// When this page loaded — sent back with the booking so the server can sanity-check that a human
+// actually clicked through the steps rather than a script posting straight to /api/bookings.
+const pageLoadedAt = Date.now();
+
 const state = {
   step: 'services',
   categories: [],
   staff: [],
   selectedServiceIds: new Set(),
   selectedStaffId: null, // null = not chosen yet, 0 = "no preference"
-  selectedDate: new Date().toISOString().slice(0, 10),
+  selectedDate: todayLocalDateInputValue(),
   slots: [],
   selectedSlot: null,
   customer: { name: '', email: '', phone: '', notes: '' },
@@ -23,12 +27,23 @@ const backBtn = document.getElementById('backBtn');
 
 const STEP_ORDER = ['services', 'professional', 'time', 'details', 'confirmed'];
 
+// new Date().toISOString().slice(0,10) gives the UTC date, which lags a day behind for anyone
+// east of UTC (e.g. Sydney mornings) — use the venue's local date instead. en-CA formats as
+// YYYY-MM-DD, which is exactly what <input type=date> wants.
+function todayLocalDateInputValue() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+}
+
 function fmtMoney(cents) {
   return '$' + (cents / 100).toFixed(2).replace(/\.00$/, '');
 }
 
 function initials(name) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function avatarHtml(name, photoUrl) {
+  return photoUrl ? `<img src="${photoUrl}" alt="${name}">` : initials(name);
 }
 
 async function api(path, opts) {
@@ -44,6 +59,16 @@ async function loadCatalogue() {
   ]);
   state.categories = categories;
   state.staff = staff;
+}
+
+async function loadBusinessName() {
+  try {
+    const info = await api('/api/business-info');
+    const name = info.businessName ?? info.BusinessName;
+    if (name) document.getElementById('venueName').textContent = name;
+  } catch {
+    // Falls back to the static "SlotSmith" text already in booking.html — not worth blocking the page over.
+  }
 }
 
 function selectedServices() {
@@ -161,10 +186,11 @@ function renderProfessionalStep() {
   for (const s of state.staff) {
     const id = s.staffId ?? s.StaffId;
     const name = s.displayName ?? s.DisplayName;
+    const photoUrl = s.photoUrl ?? s.PhotoUrl;
     const card = document.createElement('div');
     card.className = 'card selectable' + (state.selectedStaffId === id ? ' selected' : '');
     card.innerHTML = `
-      <div class="avatar">${initials(name)}</div>
+      <div class="avatar">${avatarHtml(name, photoUrl)}</div>
       <div class="card-body">
         <div class="card-title">${name}</div>
       </div>`;
@@ -245,11 +271,17 @@ function renderBookingSummary() {
   const start = new Date(state.selectedSlot.startUtc ?? state.selectedSlot.StartUtc);
   const whenText = start.toLocaleString([], { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' });
 
-  const { totalPrice } = cartSummary();
+  const { totalPrice, totalMinutes } = cartSummary();
+  const durationText = totalMinutes >= 60
+    ? `${Math.floor(totalMinutes / 60)}h${totalMinutes % 60 ? ' ' + (totalMinutes % 60) + 'm' : ''}`
+    : `${totalMinutes} mins`;
 
   box.innerHTML = `
     <div style="display:flex;justify-content:space-between;padding:4px 0;">
       <span style="color:var(--muted)">Service</span><span style="font-weight:600;text-align:right;">${serviceNames}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:4px 0;">
+      <span style="color:var(--muted)">Time needed</span><span style="font-weight:600;">${durationText}</span>
     </div>
     <div style="display:flex;justify-content:space-between;padding:4px 0;">
       <span style="color:var(--muted)">With</span><span style="font-weight:600;">${staffName}</span>
@@ -284,6 +316,11 @@ function renderDetailsStep() {
 
     <label for="field-notes">Notes for your stylist (optional)</label>
     <textarea id="field-notes" name="notes" rows="3">${state.customer.notes}</textarea>
+
+    <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+      <label for="field-hp">Leave this field blank</label>
+      <input id="field-hp" name="companyUrl" type="text" tabindex="-1" autocomplete="off">
+    </div>
   `;
   const syncFormState = () => {
     state.customer.name = form.name.value;
@@ -303,6 +340,7 @@ function renderDetailsStep() {
 
 async function submitBooking() {
   const staffIdForSlot = state.selectedSlot.staffId ?? state.selectedSlot.StaffId;
+  const honeypotEl = document.getElementById('field-hp');
   const body = {
     staffId: staffIdForSlot,
     customerName: state.customer.name,
@@ -311,6 +349,8 @@ async function submitBooking() {
     startUtc: state.selectedSlot.startUtc ?? state.selectedSlot.StartUtc,
     items: Array.from(state.selectedServiceIds).map(id => ({ serviceId: id })),
     notes: state.customer.notes,
+    website: honeypotEl ? honeypotEl.value : '',
+    formLoadedAtUnixMs: pageLoadedAt,
   };
   try {
     state.lastBooking = await api('/api/bookings', {
@@ -330,7 +370,8 @@ function renderConfirmedStep() {
   box.className = 'confirm-box';
   const start = new Date(state.lastBooking?.startUtc ?? state.lastBooking?.StartUtc);
   box.innerHTML = `
-    <h1>You're booked ✓</h1>
+    <div class="confirm-icon">&#10003;</div>
+    <h1>You're booked</h1>
     <p>${start.toLocaleString([], { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })}</p>
     <p>A confirmation has been sent to ${state.customer.email}.</p>
   `;
@@ -367,6 +408,7 @@ function render() {
   }
 }
 
+loadBusinessName();
 loadCatalogue().then(render).catch(err => {
   app.innerHTML = `<div class="empty-state">Couldn't load the booking page: ${err.message}</div>`;
 });

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlotSmith — Staff</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { padding-bottom: 40px; }
+  .staff-card { display: block; }
+  .staff-card .row1 { display: flex; align-items: center; gap: 14px; }
+  .staff-card .grow { flex: 1; }
+  .staff-card.inactive { opacity: 0.55; }
+  .badge { font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--panel); color: var(--muted); }
+  .badge.active { background: #eafaf0; color: #1a7a3c; }
+  .field-inline { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin-top: 10px; }
+  .field-inline input, .field-inline textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
+  .services-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 14px; margin-top: 10px; }
+  .services-grid label { font-size: 0.85rem; display: flex; align-items: center; gap: 6px; font-weight: 400; color: var(--ink); }
+  .cat-heading { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); margin-top: 12px; }
+  details.admin-details { margin-top: 12px; }
+  details.admin-details summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  .row-note { font-size: 0.8rem; margin-left: 8px; }
+  .timeoff-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .timeoff-row .reason { color: var(--muted); font-size: 0.8rem; }
+  .timeoff-add { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin-top: 12px; }
+  .timeoff-add label { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+  .timeoff-add input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font: inherit; width: 100%; }
+  .timeoff-add .reason-field { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html"><span class="brand-mark"></span>SlotSmith</a>
+  <div id="adminNav"></div>
+</header>
+<main>
+  <p style="margin:16px 20px 0;color:var(--muted)">
+    Add or deactivate stylists, and choose which services each one offers.
+  </p>
+  <div id="banner"></div>
+
+  <h2 class="section-title">Add a stylist</h2>
+  <div class="card" style="flex-direction:column;align-items:stretch;">
+    <div class="field-inline">
+      <label for="new-name">Name</label>
+      <input id="new-name" placeholder="Full name">
+    </div>
+    <div class="field-inline">
+      <label for="new-email">Email</label>
+      <input id="new-email" type="email" placeholder="optional">
+    </div>
+    <div class="field-inline">
+      <label for="new-bio">Bio</label>
+      <textarea id="new-bio" rows="2" placeholder="optional"></textarea>
+    </div>
+    <div class="actions" style="margin-left:0;padding-left:0;">
+      <button class="pill-btn primary" id="addStaffBtn">Add stylist</button>
+    </div>
+  </div>
+
+  <h2 class="section-title">Existing staff</h2>
+  <div id="staffList"></div>
+</main>
+<script src="admin-nav.js"></script>
+<script>
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) {
+    location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname + location.search);
+    return new Promise(() => {}); // page is navigating away — never resolve
+  }
+  const raw = await r.text();
+  if (!r.ok) throw new Error(raw || r.statusText);
+  return raw ? JSON.parse(raw) : null; // Results.Ok() with no body comes back as 200 + empty string, not 204
+}
+
+function banner(msg, isError) {
+  document.getElementById('banner').innerHTML =
+    `<div class="banner${isError ? ' error' : ''}">${msg}</div>`;
+}
+
+let categories = [];
+let allServices = [];
+
+async function loadCatalogue() {
+  const cats = await api('/api/admin/services'); // grouped shape, but we just need the flat service list + names
+  categories = cats.map(c => ({ categoryId: c.categoryId, name: c.name }));
+  allServices = cats.flatMap(c => c.services.map(s => ({ ...s, categoryId: c.categoryId })));
+}
+
+async function loadStaff() {
+  const staff = await api('/api/admin/staff');
+  const list = document.getElementById('staffList');
+  list.innerHTML = '';
+
+  for (const s of staff) {
+    const card = document.createElement('div');
+    card.className = 'card staff-card' + (s.isActive ? '' : ' inactive');
+
+    const avatarInner = s.photoUrl
+      ? `<img src="${s.photoUrl}" alt="${s.displayName}">`
+      : (s.displayName || '?').slice(0, 2).toUpperCase();
+
+    card.innerHTML = `
+      <div class="row1">
+        <div class="avatar">${avatarInner}</div>
+        <div class="grow">
+          <div class="card-title">${s.displayName}</div>
+          <div class="card-sub">${s.email || 'No email on file'}</div>
+        </div>
+        <span class="badge ${s.isActive ? 'active' : ''}">${s.isActive ? 'Active' : 'Inactive'}</span>
+      </div>
+      <div class="field-inline"><label>Name</label><input class="f-name" value="${s.displayName}"></div>
+      <div class="field-inline"><label>Email</label><input class="f-email" type="email" value="${s.email || ''}"></div>
+      <div class="field-inline"><label>Bio</label><textarea class="f-bio" rows="2">${s.bio || ''}</textarea></div>
+      <div class="field-inline">
+        <label>Photo</label>
+        <div>
+          <input type="file" class="f-photo" accept="image/jpeg,image/png,image/webp">
+          ${s.photoUrl ? '<button type="button" class="pill-btn remove-photo-btn" style="margin-left:8px;padding:4px 12px;font-size:0.8rem;">Remove photo</button>' : ''}
+        </div>
+      </div>
+      <div class="actions" style="margin-left:0;padding-left:0;">
+        <button class="pill-btn save-btn">Save details</button>
+        <button class="pill-btn toggle-btn" style="${s.isActive ? 'border-color:#a3241f;color:#a3241f;' : ''}">
+          ${s.isActive ? 'Deactivate' : 'Reactivate'}
+        </button>
+        <span class="row-note"></span>
+      </div>
+      <details class="admin-details">
+        <summary>Services this stylist offers</summary>
+        <div class="services-body"></div>
+      </details>
+      <details class="admin-details">
+        <summary>Time off</summary>
+        <div class="timeoff-body"></div>
+      </details>
+    `;
+
+    const note = card.querySelector('.row-note');
+
+    const photoInput = card.querySelector('.f-photo');
+    photoInput.onchange = async () => {
+      const file = photoInput.files[0];
+      if (!file) return;
+      note.textContent = 'Uploading photo…'; note.style.color = 'var(--muted)';
+      try {
+        const formData = new FormData();
+        formData.append('photo', file);
+        const r = await fetch(`/api/admin/staff/${s.staffId}/photo`, { method: 'POST', body: formData });
+        if (r.status === 401) {
+          location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname);
+          return;
+        }
+        if (!r.ok) throw new Error(await r.text());
+        note.textContent = 'Photo uploaded ✓'; note.style.color = '#1a7a3c';
+        await loadStaff();
+      } catch (err) {
+        note.textContent = 'Failed to upload photo: ' + err.message; note.style.color = '#a3241f';
+      }
+    };
+
+    const removePhotoBtn = card.querySelector('.remove-photo-btn');
+    if (removePhotoBtn) {
+      removePhotoBtn.onclick = async () => {
+        note.textContent = 'Removing…'; note.style.color = 'var(--muted)';
+        try {
+          await api(`/api/admin/staff/${s.staffId}/photo`, { method: 'DELETE' });
+          note.textContent = 'Photo removed ✓'; note.style.color = '#1a7a3c';
+          await loadStaff();
+        } catch (err) {
+          note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+        }
+      };
+    }
+
+    card.querySelector('.save-btn').onclick = async () => {
+      const displayName = card.querySelector('.f-name').value.trim();
+      const email = card.querySelector('.f-email').value.trim() || null;
+      const bio = card.querySelector('.f-bio').value.trim() || null;
+      if (!displayName) { note.textContent = 'Name is required.'; note.style.color = '#a3241f'; return; }
+      note.textContent = 'Saving…'; note.style.color = 'var(--muted)';
+      try {
+        await api(`/api/admin/staff/${s.staffId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayName, email, bio, isActive: s.isActive }),
+        });
+        note.textContent = 'Saved ✓'; note.style.color = '#1a7a3c';
+      } catch (err) {
+        note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+      }
+    };
+
+    card.querySelector('.toggle-btn').onclick = async () => {
+      const displayName = card.querySelector('.f-name').value.trim() || s.displayName;
+      const email = card.querySelector('.f-email').value.trim() || null;
+      const bio = card.querySelector('.f-bio').value.trim() || null;
+      try {
+        await api(`/api/admin/staff/${s.staffId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayName, email, bio, isActive: !s.isActive }),
+        });
+        await loadStaff();
+      } catch (err) {
+        note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+      }
+    };
+
+    const servicesDetails = card.querySelector('.services-body').closest('details');
+    let servicesLoaded = false;
+    servicesDetails.addEventListener('toggle', async () => {
+      if (servicesDetails.open && !servicesLoaded) {
+        servicesLoaded = true;
+        await renderServiceCheckboxes(s.staffId, card.querySelector('.services-body'));
+      }
+    });
+
+    const timeoffDetails = card.querySelector('.timeoff-body').closest('details');
+    let timeoffLoaded = false;
+    timeoffDetails.addEventListener('toggle', async () => {
+      if (timeoffDetails.open && !timeoffLoaded) {
+        timeoffLoaded = true;
+        await renderTimeOff(s.staffId, card.querySelector('.timeoff-body'));
+      }
+    });
+
+    list.appendChild(card);
+  }
+}
+
+async function renderServiceCheckboxes(staffId, container) {
+  container.innerHTML = 'Loading…';
+  const currentIds = new Set(await api(`/api/admin/staff/${staffId}/services`));
+
+  container.innerHTML = '';
+  for (const cat of categories) {
+    const servicesInCat = allServices.filter(sv => sv.categoryId === cat.categoryId);
+    if (servicesInCat.length === 0) continue;
+
+    const heading = document.createElement('div');
+    heading.className = 'cat-heading';
+    heading.textContent = cat.name;
+    container.appendChild(heading);
+
+    const grid = document.createElement('div');
+    grid.className = 'services-grid';
+    for (const sv of servicesInCat) {
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" value="${sv.serviceId}" ${currentIds.has(sv.serviceId) ? 'checked' : ''}> ${sv.name}`;
+      grid.appendChild(label);
+    }
+    container.appendChild(grid);
+  }
+
+  const saveRow = document.createElement('div');
+  saveRow.className = 'actions';
+  saveRow.style.marginLeft = '0';
+  saveRow.style.paddingLeft = '0';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'pill-btn primary';
+  saveBtn.textContent = 'Save services';
+  const note = document.createElement('span');
+  note.className = 'row-note';
+  saveBtn.onclick = async () => {
+    const serviceIds = Array.from(container.querySelectorAll('input[type=checkbox]:checked')).map(cb => parseInt(cb.value, 10));
+    note.textContent = 'Saving…'; note.style.color = 'var(--muted)';
+    try {
+      await api(`/api/admin/staff/${staffId}/services`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceIds }),
+      });
+      note.textContent = 'Saved ✓'; note.style.color = '#1a7a3c';
+    } catch (err) {
+      note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+    }
+  };
+  saveRow.appendChild(saveBtn);
+  saveRow.appendChild(note);
+  container.appendChild(saveRow);
+}
+
+function fmtTimeOffDate(iso) {
+  return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Australia/Sydney' });
+}
+
+async function renderTimeOff(staffId, container) {
+  container.innerHTML = 'Loading…';
+  const entries = await api(`/api/admin/staff/${staffId}/time-off`);
+
+  container.innerHTML = '';
+
+  if (entries.length === 0) {
+    const empty = document.createElement('p');
+    empty.style.cssText = 'color:var(--muted);font-size:0.85rem;margin:8px 0 0;';
+    empty.textContent = 'No time off booked.';
+    container.appendChild(empty);
+  } else {
+    for (const t of entries) {
+      // EndUtc is stored as the start of the day *after* the last day off (see Program.cs), so
+      // step back a day to show the actual last calendar day off.
+      const lastDayOff = new Date(new Date(t.endUtc ?? t.EndUtc).getTime() - 24 * 60 * 60 * 1000);
+      const row = document.createElement('div');
+      row.className = 'timeoff-row';
+      row.innerHTML = `
+        <div>
+          <div>${fmtTimeOffDate(t.startUtc ?? t.StartUtc)} &ndash; ${fmtTimeOffDate(lastDayOff)}</div>
+          ${(t.reason ?? t.Reason) ? `<div class="reason">${t.reason ?? t.Reason}</div>` : ''}
+        </div>
+        <button type="button" class="pill-btn remove-timeoff-btn" style="padding:4px 12px;font-size:0.8rem;">Remove</button>
+      `;
+      row.querySelector('.remove-timeoff-btn').onclick = async () => {
+        const timeOffId = t.timeOffId ?? t.TimeOffId;
+        try {
+          await api(`/api/admin/staff/time-off/${timeOffId}`, { method: 'DELETE' });
+          await renderTimeOff(staffId, container);
+        } catch (err) {
+          alert('Failed to remove: ' + err.message);
+        }
+      };
+      container.appendChild(row);
+    }
+  }
+
+  const form = document.createElement('div');
+  form.className = 'timeoff-add';
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+  form.innerHTML = `
+    <div>
+      <label for="to-start-${staffId}">From</label>
+      <input type="date" id="to-start-${staffId}" min="${today}" value="${today}">
+    </div>
+    <div>
+      <label for="to-end-${staffId}">To</label>
+      <input type="date" id="to-end-${staffId}" min="${today}" value="${today}">
+    </div>
+    <div class="reason-field">
+      <label for="to-reason-${staffId}">Reason (optional, shown to affected customers)</label>
+      <input type="text" id="to-reason-${staffId}" placeholder="e.g. Annual leave">
+    </div>
+  `;
+  container.appendChild(form);
+
+  const startInput = document.getElementById(`to-start-${staffId}`);
+  const endInput = document.getElementById(`to-end-${staffId}`);
+  startInput.onchange = () => {
+    endInput.min = startInput.value;
+    if (endInput.value < startInput.value) endInput.value = startInput.value;
+  };
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.style.cssText = 'margin-left:0;padding-left:0;';
+  const addBtn = document.createElement('button');
+  addBtn.className = 'pill-btn primary';
+  addBtn.textContent = 'Add time off';
+  const note = document.createElement('span');
+  note.className = 'row-note';
+  addBtn.onclick = async () => {
+    const startDate = document.getElementById(`to-start-${staffId}`).value;
+    const endDate = document.getElementById(`to-end-${staffId}`).value;
+    const reason = document.getElementById(`to-reason-${staffId}`).value.trim() || null;
+    if (!startDate || !endDate) { note.textContent = 'Pick both dates.'; note.style.color = '#a3241f'; return; }
+    if (endDate < startDate) { note.textContent = 'End date must be on or after the start date.'; note.style.color = '#a3241f'; return; }
+
+    note.textContent = 'Saving…'; note.style.color = 'var(--muted)';
+    try {
+      const result = await api(`/api/admin/staff/${staffId}/time-off`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate, endDate, reason }),
+      });
+      const notified = result?.notifiedCount ?? result?.NotifiedCount ?? 0;
+      note.textContent = notified > 0
+        ? `Added — ${notified} customer${notified === 1 ? '' : 's'} emailed to reschedule ✓`
+        : 'Time off added ✓';
+      note.style.color = '#1a7a3c';
+      await renderTimeOff(staffId, container);
+    } catch (err) {
+      note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+    }
+  };
+  actions.appendChild(addBtn);
+  actions.appendChild(note);
+  container.appendChild(actions);
+}
+
+document.getElementById('addStaffBtn').onclick = async () => {
+  const displayName = document.getElementById('new-name').value.trim();
+  const email = document.getElementById('new-email').value.trim() || null;
+  const bio = document.getElementById('new-bio').value.trim() || null;
+  if (!displayName) { banner('Name is required.', true); return; }
+  try {
+    await api('/api/admin/staff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName, email, bio }),
+    });
+    document.getElementById('new-name').value = '';
+    document.getElementById('new-email').value = '';
+    document.getElementById('new-bio').value = '';
+    banner(`Added ${displayName}. Don't forget to pick which services they offer below.`);
+    await loadStaff();
+  } catch (err) {
+    banner('Failed to add stylist: ' + err.message, true);
+  }
+};
+
+async function init() {
+  try {
+    await loadCatalogue();
+    await loadStaff();
+  } catch (err) {
+    banner('Failed to load: ' + err.message, true);
+  }
+}
+init();
+</script>
+</body>
+</html>

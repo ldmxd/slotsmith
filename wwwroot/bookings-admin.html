@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlotSmith — Bookings</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { padding-bottom: 40px; }
+  .search-row { display: flex; gap: 10px; margin: 16px 20px 0; }
+  .search-row input {
+    flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+    font-size: 1rem; font-family: inherit;
+  }
+  table.bookings { width: calc(100% - 40px); margin: 16px 20px 30px; border-collapse: collapse; }
+  table.bookings th {
+    text-align: left; font-size: 0.8rem; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.02em; padding: 8px 10px; border-bottom: 1px solid var(--border);
+  }
+  table.bookings td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.bookings .customer-name { font-weight: 600; }
+  table.bookings .customer-sub { color: var(--muted); font-size: 0.8rem; }
+  .status-tag {
+    font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel); color: var(--muted); white-space: nowrap;
+  }
+  .status-tag.confirmed { background: var(--success-bg); color: var(--success); }
+  .status-tag.cancelled { background: var(--danger-bg); color: var(--danger); }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html"><span class="brand-mark"></span>SlotSmith</a>
+  <div id="adminNav"></div>
+</header>
+<main>
+  <p style="margin:16px 20px 0;color:var(--muted)">
+    Search by client name, email, or phone to find a booking — handy when a customer calls in
+    wanting to change or cancel one instead of using their own emailed link.
+  </p>
+  <div id="banner"></div>
+
+  <div class="search-row">
+    <input id="searchInput" placeholder="Search by name, email, or phone…" autofocus>
+    <button class="pill-btn primary" id="searchBtn">Search</button>
+  </div>
+
+  <div id="results"></div>
+</main>
+<script src="admin-nav.js"></script>
+<script>
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) {
+    location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname + location.search);
+    return new Promise(() => {}); // page is navigating away — never resolve
+  }
+  const raw = await r.text();
+  if (!r.ok) throw new Error(raw || r.statusText);
+  return raw ? JSON.parse(raw) : null; // Results.Ok() with no body comes back as 200 + empty string, not 204
+}
+
+function fmtWhen(iso) {
+  return new Date(iso).toLocaleString('en-AU', {
+    weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+    timeZone: 'Australia/Sydney'
+  });
+}
+
+function money(cents) {
+  return (cents / 100).toLocaleString('en-AU', { style: 'currency', currency: 'AUD' });
+}
+
+let searching = false;
+
+async function loadUpcoming() {
+  if (searching) return;
+  searching = true;
+  const results = document.getElementById('results');
+  results.innerHTML = '<p style="margin:16px 20px;color:var(--muted);">Loading…</p>';
+  try {
+    const rows = await api('/api/admin/bookings/upcoming');
+    renderResults(rows, {
+      heading: 'Upcoming bookings',
+      empty: 'No upcoming bookings.'
+    });
+  } catch (err) {
+    results.innerHTML = `<div class="banner error" style="margin:16px 20px;">Couldn't load upcoming bookings: ${err.message}</div>`;
+  } finally {
+    searching = false;
+  }
+}
+
+async function runSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+
+  // Nothing (or too little) typed — fall back to the default "what's coming up" view rather
+  // than making the person search just to see anything at all.
+  if (q.length < 2) {
+    await loadUpcoming();
+    return;
+  }
+  if (searching) return;
+  searching = true;
+  const results = document.getElementById('results');
+  results.innerHTML = '<p style="margin:16px 20px;color:var(--muted);">Searching…</p>';
+
+  try {
+    const rows = await api(`/api/admin/bookings/search?q=${encodeURIComponent(q)}`);
+    renderResults(rows, {
+      heading: `Results for "${q}"`,
+      empty: `No bookings found for "${q}".`
+    });
+  } catch (err) {
+    results.innerHTML = `<div class="banner error" style="margin:16px 20px;">Search failed: ${err.message}</div>`;
+  } finally {
+    searching = false;
+  }
+}
+
+function renderResults(rows, { heading, empty }) {
+  const results = document.getElementById('results');
+
+  if (!rows || rows.length === 0) {
+    results.innerHTML = `
+      <h2 class="section-title">${heading}</h2>
+      <p style="margin:0 20px;color:var(--muted);">${empty}</p>
+    `;
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'bookings';
+  table.innerHTML = `
+    <thead>
+      <tr><th>Client</th><th>Service</th><th>With</th><th>When</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tbody = table.querySelector('tbody');
+
+  for (const b of rows) {
+    const status = (b.status ?? b.Status ?? '').toLowerCase();
+    const isPast = new Date(b.startUtc ?? b.StartUtc).getTime() < Date.now();
+    // Nothing sensible to do with a booking that's already cancelled, or already happened —
+    // reschedule/cancel on the manage-booking.html end doesn't check for "this is in the past",
+    // so cancelling an old appointment would fire the same "your booking has been cancelled"
+    // email a live cancellation sends, which would be confusing for something that's already
+    // over. Skip the button for both cases and say so directly instead.
+    let actionHtml;
+    if (status === 'cancelled') {
+      actionHtml = '<span style="color:var(--muted);font-size:0.85rem;">Cancelled — no action</span>';
+    } else if (isPast) {
+      actionHtml = '<span style="color:var(--muted);font-size:0.85rem;">Already happened — no action</span>';
+    } else {
+      actionHtml = `<a class="pill-btn" style="padding:6px 14px;font-size:0.85rem;text-decoration:none;display:inline-block;"
+             href="/manage-booking.html?token=${b.manageToken ?? b.ManageToken}" target="_blank" rel="noopener">
+           Manage booking
+         </a>`;
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <div class="customer-name">${b.customerName ?? b.CustomerName}</div>
+        <div class="customer-sub">${b.customerEmail ?? b.CustomerEmail}${(b.customerPhone ?? b.CustomerPhone) ? ' · ' + (b.customerPhone ?? b.CustomerPhone) : ''}</div>
+      </td>
+      <td>
+        ${b.serviceNames ?? b.ServiceNames}
+        <div class="customer-sub">${money(b.totalPriceCents ?? b.TotalPriceCents)}</div>
+      </td>
+      <td>${b.staffName ?? b.StaffName}</td>
+      <td>${fmtWhen(b.startUtc ?? b.StartUtc)}</td>
+      <td><span class="status-tag ${status}">${b.status ?? b.Status}</span></td>
+      <td>${actionHtml}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  const heading2 = document.createElement('h2');
+  heading2.className = 'section-title';
+  heading2.textContent = heading;
+
+  results.innerHTML = '';
+  results.appendChild(heading2);
+  results.appendChild(table);
+}
+
+document.getElementById('searchBtn').onclick = runSearch;
+document.getElementById('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') runSearch();
+});
+
+loadUpcoming();
+</script>
+</body>
+</html>

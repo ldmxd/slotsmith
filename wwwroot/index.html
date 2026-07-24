@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlotSmith</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { padding-bottom: 40px; }
+  .hero { margin: 40px 20px 8px; }
+  .hero h1 { font-size: 2rem; margin: 0 0 6px; }
+  .hero p { color: var(--muted); margin: 0; }
+  .link-card {
+    display: flex; align-items: center; gap: 16px;
+    margin: 12px 20px; padding: 18px; border: 1px solid var(--border); border-radius: 14px;
+    text-decoration: none; color: inherit;
+  }
+  .link-card:hover { border-color: var(--accent); }
+  .link-card .icon {
+    width: 46px; height: 46px; border-radius: 50%; background: var(--panel);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--accent-dark);
+  }
+  .link-card .icon svg { width: 22px; height: 22px; }
+  .link-card.primary .icon { background: var(--ink); color: #fff; }
+  .link-card .title { font-weight: 700; font-size: 1.05rem; }
+  .link-card .sub { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="brand"><span class="brand-mark"></span>SlotSmith</div></header>
+
+<main>
+  <div class="hero">
+    <h1 id="heroTitle">Book an appointment</h1>
+    <p>Choose a service, pick a stylist, find a time.</p>
+  </div>
+  <a class="link-card primary" href="/booking.html" style="border-color:var(--ink);">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"></rect><path d="M3 9h18"></path><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M8 14h.01"></path><path d="M12 14h.01"></path><path d="M16 14h.01"></path></svg>
+    </div>
+    <div>
+      <div class="title">Book now</div>
+      <div class="sub">Customer-facing booking flow</div>
+    </div>
+  </a>
+
+  <h2 class="section-title">Staff &amp; admin tools</h2>
+  <a class="link-card" href="/bookings-admin.html">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+    </div>
+    <div>
+      <div class="title">Bookings</div>
+      <div class="sub">Search by client to reschedule or cancel — for phone-in requests</div>
+    </div>
+  </a>
+  <a class="link-card" href="/staff-admin.html">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+    </div>
+    <div>
+      <div class="title">Staff</div>
+      <div class="sub">Add or deactivate stylists, assign services, upload photos</div>
+    </div>
+  </a>
+  <a class="link-card" href="/services-admin.html">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+    </div>
+    <div>
+      <div class="title">Prices &amp; durations</div>
+      <div class="sub">Edit individual services or apply a yearly CPI rise</div>
+    </div>
+  </a>
+  <a class="link-card" href="/admin.html">
+    <div class="icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+    </div>
+    <div>
+      <div class="title">Calendar setup</div>
+      <div class="sub">Link a stylist's Google or Outlook calendar</div>
+    </div>
+  </a>
+
+  <p style="margin:24px 20px 0;color:var(--muted);font-size:0.85rem;">
+    Staff &amp; admin tools require <a href="/admin-login.html">logging in</a>.
+  </p>
+</main>
+<script>
+  fetch('/api/business-info').then(r => r.json()).then(info => {
+    const name = info.businessName ?? info.BusinessName;
+    if (name) document.getElementById('heroTitle').textContent = `Book at ${name}`;
+  }).catch(() => {});
+</script>
+</body>
+</html>

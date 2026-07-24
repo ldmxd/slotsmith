@@ -60,6 +60,16 @@ public class MicrosoftCalendarProvider : ICalendarProvider
         return AuthEndpoint + "?" + string.Join("&", qs.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
     }
 
+    /// <summary>resp.EnsureSuccessStatusCode() throws without ever reading the body, which is where
+    /// Microsoft actually explains what went wrong. This reads the body first so failures are
+    /// diagnosable instead of a bare "400 Bad Request".</summary>
+    private static async Task EnsureSuccessWithBodyAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        if (resp.IsSuccessStatusCode) return;
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        throw new HttpRequestException($"Microsoft Graph call failed ({(int)resp.StatusCode} {resp.StatusCode}): {body}");
+    }
+
     public async Task<CalendarConnection> ExchangeCodeAsync(int staffId, string code, CancellationToken ct = default)
     {
         var http = _httpFactory.CreateClient();
@@ -72,7 +82,7 @@ public class MicrosoftCalendarProvider : ICalendarProvider
             ["grant_type"] = "authorization_code",
             ["scope"] = Scope
         }), ct);
-        resp.EnsureSuccessStatusCode();
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var token = await resp.Content.ReadFromJsonAsync<MsTokenResponse>(cancellationToken: ct)
             ?? throw new InvalidOperationException("Empty token response from Microsoft");
 
@@ -86,7 +96,8 @@ public class MicrosoftCalendarProvider : ICalendarProvider
             AccessTokenEncrypted: _protector.Protect(token.AccessToken!),
             RefreshTokenEncrypted: _protector.Protect(token.RefreshToken ?? ""),
             TokenExpiresUtc: DateTime.UtcNow.AddSeconds(token.ExpiresIn),
-            ConnectedAt: DateTime.UtcNow);
+            ConnectedAt: DateTime.UtcNow,
+            CalendarId: null);   // defaults to the mailbox's default calendar until picked
     }
 
     private async Task<string?> GetAccountEmailAsync(string accessToken, CancellationToken ct)
@@ -112,7 +123,7 @@ public class MicrosoftCalendarProvider : ICalendarProvider
             ["grant_type"] = "refresh_token",
             ["scope"] = Scope
         }), ct);
-        resp.EnsureSuccessStatusCode();
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var token = await resp.Content.ReadFromJsonAsync<MsTokenResponse>(cancellationToken: ct)
             ?? throw new InvalidOperationException("Empty refresh response from Microsoft");
 
@@ -127,6 +138,13 @@ public class MicrosoftCalendarProvider : ICalendarProvider
         };
     }
 
+    /// <summary>Base Graph path for this connection's chosen calendar, or the mailbox's default
+    /// calendar (plain "/me/...") if none has been picked yet.</summary>
+    private static string CalendarBase(CalendarConnection connection) =>
+        connection.CalendarId is null
+            ? $"{GraphBase}/me"
+            : $"{GraphBase}/me/calendars/{Uri.EscapeDataString(connection.CalendarId)}";
+
     public async Task<List<BusyInterval>> GetBusyTimesAsync(CalendarConnection connection, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
     {
         var http = _httpFactory.CreateClient();
@@ -134,10 +152,10 @@ public class MicrosoftCalendarProvider : ICalendarProvider
         // Prefer header pins the response to UTC regardless of the mailbox's configured timezone.
         http.DefaultRequestHeaders.Add("Prefer", "outlook.timezone=\"UTC\"");
 
-        var url = $"{GraphBase}/me/calendarView?startDateTime={Uri.EscapeDataString(fromUtc.ToString("o"))}" +
+        var url = $"{CalendarBase(connection)}/calendarView?startDateTime={Uri.EscapeDataString(fromUtc.ToString("o"))}" +
                   $"&endDateTime={Uri.EscapeDataString(toUtc.ToString("o"))}&$select=start,end,showAs&$top=250";
         var resp = await http.GetAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
 
         var result = new List<BusyInterval>();
@@ -168,8 +186,8 @@ public class MicrosoftCalendarProvider : ICalendarProvider
             start = new { dateTime = startUtc.ToString("o"), timeZone = "UTC" },
             end = new { dateTime = endUtc.ToString("o"), timeZone = "UTC" }
         };
-        var resp = await http.PostAsJsonAsync($"{GraphBase}/me/events", body, ct);
-        resp.EnsureSuccessStatusCode();
+        var resp = await http.PostAsJsonAsync($"{CalendarBase(connection)}/events", body, ct);
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         return doc.GetProperty("id").GetString()!;
     }
@@ -178,9 +196,32 @@ public class MicrosoftCalendarProvider : ICalendarProvider
     {
         var http = _httpFactory.CreateClient();
         http.DefaultRequestHeaders.Authorization = new("Bearer", _protector.Unprotect(connection.AccessTokenEncrypted));
-        var resp = await http.DeleteAsync($"{GraphBase}/me/events/{eventId}", ct);
+        var resp = await http.DeleteAsync($"{CalendarBase(connection)}/events/{eventId}", ct);
         if (resp.StatusCode != System.Net.HttpStatusCode.NotFound)
-            resp.EnsureSuccessStatusCode();
+            await EnsureSuccessWithBodyAsync(resp, ct);
+    }
+
+    public async Task<List<CalendarOption>> ListCalendarsAsync(CalendarConnection connection, CancellationToken ct = default)
+    {
+        var http = _httpFactory.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new("Bearer", _protector.Unprotect(connection.AccessTokenEncrypted));
+
+        var resp = await http.GetAsync($"{GraphBase}/me/calendars?$select=id,name,isDefaultCalendar", ct);
+        await EnsureSuccessWithBodyAsync(resp, ct);
+        var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+
+        var result = new List<CalendarOption>();
+        if (doc.TryGetProperty("value", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString()!;
+                var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? id : id;
+                var isDefault = item.TryGetProperty("isDefaultCalendar", out var d) && d.GetBoolean();
+                result.Add(new CalendarOption(id, name, isDefault));
+            }
+        }
+        return result;
     }
 
     private class MsTokenResponse

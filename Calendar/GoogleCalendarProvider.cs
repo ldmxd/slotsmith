@@ -25,7 +25,18 @@ public class GoogleCalendarProvider : ICalendarProvider
     private const string AuthEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
     private const string TokenEndpoint = "https://oauth2.googleapis.com/token";
     private const string ApiBase = "https://www.googleapis.com/calendar/v3";
-    private const string Scope = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly";
+    // calendar.events: create/edit/cancel the confirmed-booking event.
+    // calendar.freebusy: read-only, scoped specifically to free/busy queries.
+    // calendar.calendarlist.readonly: lets ListCalendarsAsync show the account's calendar names
+    // so the staff member can pick which one to use — read-only, no event content access.
+    // userinfo.email: just so GetAccountEmailAsync can show which account is connected in
+    // admin.html instead of "unknown account" — doesn't grant anything beyond reading the address.
+    // None of these is calendar.readonly, which would grant read access to every calendar's
+    // actual event content — broader than anything this app does.
+    private const string Scope = "https://www.googleapis.com/auth/calendar.events "
+        + "https://www.googleapis.com/auth/calendar.freebusy "
+        + "https://www.googleapis.com/auth/calendar.calendarlist.readonly "
+        + "https://www.googleapis.com/auth/userinfo.email";
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly IConfiguration _config;
@@ -60,6 +71,16 @@ public class GoogleCalendarProvider : ICalendarProvider
         return AuthEndpoint + "?" + string.Join("&", qs.Select(kv => $"{kv.Key}={Uri.EscapeDataString(kv.Value)}"));
     }
 
+    /// <summary>resp.EnsureSuccessStatusCode() throws without ever reading the body, which is where
+    /// Google actually explains what went wrong (e.g. "redirect_uri_mismatch", "invalid_grant").
+    /// This reads the body first so failures are diagnosable instead of a bare "400 Bad Request".</summary>
+    private static async Task EnsureSuccessWithBodyAsync(HttpResponseMessage resp, CancellationToken ct)
+    {
+        if (resp.IsSuccessStatusCode) return;
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        throw new HttpRequestException($"Google API call failed ({(int)resp.StatusCode} {resp.StatusCode}): {body}");
+    }
+
     public async Task<CalendarConnection> ExchangeCodeAsync(int staffId, string code, CancellationToken ct = default)
     {
         var http = _httpFactory.CreateClient();
@@ -71,7 +92,7 @@ public class GoogleCalendarProvider : ICalendarProvider
             ["redirect_uri"] = RedirectUri,
             ["grant_type"] = "authorization_code"
         }), ct);
-        resp.EnsureSuccessStatusCode();
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var token = await resp.Content.ReadFromJsonAsync<GoogleTokenResponse>(cancellationToken: ct)
             ?? throw new InvalidOperationException("Empty token response from Google");
 
@@ -85,7 +106,8 @@ public class GoogleCalendarProvider : ICalendarProvider
             AccessTokenEncrypted: _protector.Protect(token.AccessToken!),
             RefreshTokenEncrypted: _protector.Protect(token.RefreshToken ?? ""),
             TokenExpiresUtc: DateTime.UtcNow.AddSeconds(token.ExpiresIn),
-            ConnectedAt: DateTime.UtcNow);
+            ConnectedAt: DateTime.UtcNow,
+            CalendarId: null);   // defaults to "primary" until the staff member picks one via admin.html
     }
 
     private async Task<string?> GetAccountEmailAsync(string accessToken, CancellationToken ct)
@@ -109,7 +131,7 @@ public class GoogleCalendarProvider : ICalendarProvider
             ["client_secret"] = ClientSecret,
             ["grant_type"] = "refresh_token"
         }), ct);
-        resp.EnsureSuccessStatusCode();
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var token = await resp.Content.ReadFromJsonAsync<GoogleTokenResponse>(cancellationToken: ct)
             ?? throw new InvalidOperationException("Empty refresh response from Google");
 
@@ -122,6 +144,7 @@ public class GoogleCalendarProvider : ICalendarProvider
 
     public async Task<List<BusyInterval>> GetBusyTimesAsync(CalendarConnection connection, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
     {
+        var calendarId = connection.CalendarId ?? "primary";
         var http = _httpFactory.CreateClient();
         http.DefaultRequestHeaders.Authorization = new("Bearer", _protector.Unprotect(connection.AccessTokenEncrypted));
 
@@ -129,16 +152,16 @@ public class GoogleCalendarProvider : ICalendarProvider
         {
             timeMin = fromUtc.ToString("o"),
             timeMax = toUtc.ToString("o"),
-            items = new[] { new { id = "primary" } }
+            items = new[] { new { id = calendarId } }
         };
         var resp = await http.PostAsJsonAsync($"{ApiBase}/freeBusy", body, ct);
-        resp.EnsureSuccessStatusCode();
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
 
         var result = new List<BusyInterval>();
         if (doc.TryGetProperty("calendars", out var cals) &&
-            cals.TryGetProperty("primary", out var primary) &&
-            primary.TryGetProperty("busy", out var busy))
+            cals.TryGetProperty(calendarId, out var cal) &&
+            cal.TryGetProperty("busy", out var busy))
         {
             foreach (var b in busy.EnumerateArray())
             {
@@ -152,6 +175,7 @@ public class GoogleCalendarProvider : ICalendarProvider
 
     public async Task<string> CreateEventAsync(CalendarConnection connection, string title, string? description, DateTime startUtc, DateTime endUtc, CancellationToken ct = default)
     {
+        var calendarId = connection.CalendarId ?? "primary";
         var http = _httpFactory.CreateClient();
         http.DefaultRequestHeaders.Authorization = new("Bearer", _protector.Unprotect(connection.AccessTokenEncrypted));
 
@@ -162,19 +186,43 @@ public class GoogleCalendarProvider : ICalendarProvider
             start = new { dateTime = startUtc.ToString("o"), timeZone = "UTC" },
             end = new { dateTime = endUtc.ToString("o"), timeZone = "UTC" }
         };
-        var resp = await http.PostAsJsonAsync($"{ApiBase}/calendars/primary/events", body, ct);
-        resp.EnsureSuccessStatusCode();
+        var resp = await http.PostAsJsonAsync($"{ApiBase}/calendars/{Uri.EscapeDataString(calendarId)}/events", body, ct);
+        await EnsureSuccessWithBodyAsync(resp, ct);
         var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         return doc.GetProperty("id").GetString()!;
     }
 
     public async Task CancelEventAsync(CalendarConnection connection, string eventId, CancellationToken ct = default)
     {
+        var calendarId = connection.CalendarId ?? "primary";
         var http = _httpFactory.CreateClient();
         http.DefaultRequestHeaders.Authorization = new("Bearer", _protector.Unprotect(connection.AccessTokenEncrypted));
-        var resp = await http.DeleteAsync($"{ApiBase}/calendars/primary/events/{eventId}", ct);
+        var resp = await http.DeleteAsync($"{ApiBase}/calendars/{Uri.EscapeDataString(calendarId)}/events/{eventId}", ct);
         if (resp.StatusCode != System.Net.HttpStatusCode.Gone)
-            resp.EnsureSuccessStatusCode();
+            await EnsureSuccessWithBodyAsync(resp, ct);
+    }
+
+    public async Task<List<CalendarOption>> ListCalendarsAsync(CalendarConnection connection, CancellationToken ct = default)
+    {
+        var http = _httpFactory.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new("Bearer", _protector.Unprotect(connection.AccessTokenEncrypted));
+
+        var resp = await http.GetAsync($"{ApiBase}/users/me/calendarList", ct);
+        await EnsureSuccessWithBodyAsync(resp, ct);
+        var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+
+        var result = new List<CalendarOption>();
+        if (doc.TryGetProperty("items", out var items))
+        {
+            foreach (var item in items.EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString()!;
+                var name = item.TryGetProperty("summary", out var s) ? s.GetString() ?? id : id;
+                var isDefault = item.TryGetProperty("primary", out var p) && p.GetBoolean();
+                result.Add(new CalendarOption(id, name, isDefault));
+            }
+        }
+        return result;
     }
 
     private class GoogleTokenResponse

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlotSmith — Service prices &amp; durations</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { padding-bottom: 40px; }
+  /* table-layout: fixed + shared percentage widths keep Price/Duration columns lined up across
+     categories — otherwise each <table> auto-sizes its own Service column from its own longest
+     name, so a category with short names (e.g. "Blowdry") ends up with its price column much
+     further left than one with long names (e.g. "Ladies Shampoo Cut Style"). */
+  table.services { width: calc(100% - 40px); margin: 0 20px 30px; border-collapse: collapse; table-layout: fixed; }
+  table.services col.col-service { width: 46%; }
+  table.services col.col-price { width: 20%; }
+  table.services col.col-duration { width: 20%; }
+  table.services col.col-actions { width: 14%; }
+  table.services th { text-align: left; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  table.services td { padding: 8px 10px; border-bottom: 1px solid var(--border); word-break: break-word; }
+  table.services input { width: 90px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  table.services .save-btn { padding: 6px 14px; }
+  table.services .row-note { font-size: 0.8rem; color: var(--muted); margin-left: 8px; }
+  h2.section-title:first-of-type { margin-top: 20px; }
+  .bulk-rise { margin: 16px 20px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .bulk-rise input { width: 80px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 1rem; }
+  .bulk-rise .row-note { font-size: 0.85rem; }
+  details.price-history { margin: 8px 20px 30px; }
+  details.price-history summary { cursor: pointer; font-weight: 600; color: var(--muted); font-size: 0.9rem; }
+  table.history { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
+  table.history th { text-align: left; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  table.history td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  table.history .tag { font-size: 0.7rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--panel); color: var(--muted); }
+  table.history .tag.cpi { background: #eafaf0; color: #1a7a3c; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/index.html"><span class="brand-mark"></span>SlotSmith</a>
+  <div id="adminNav"></div>
+</header>
+<main>
+  <p style="margin:16px 20px 0;color:var(--muted)">
+    Update what each service costs and how long it takes. Changes apply immediately to new bookings.
+  </p>
+  <div id="banner"></div>
+
+  <div class="bulk-rise">
+    <label for="bulk-percent" style="font-weight:600;">Raise all prices by</label>
+    <input id="bulk-percent" type="number" step="0.1" min="0.1" value="5">
+    <span>%, rounded up to the nearest $5</span>
+    <button class="pill-btn primary" id="bulkRiseBtn">Apply price rise</button>
+    <span class="row-note" id="bulkRiseNote"></span>
+    <div id="priceRiseStatus" style="width:100%;font-size:0.8rem;color:var(--muted);"></div>
+  </div>
+
+  <div id="categories"></div>
+
+  <details class="price-history" id="priceHistoryDetails">
+    <summary>Price change history</summary>
+    <div id="priceHistoryBody">Loading…</div>
+  </details>
+</main>
+<script src="admin-nav.js"></script>
+<script>
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) {
+    location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname + location.search);
+    return new Promise(() => {}); // page is navigating away — never resolve
+  }
+  const raw = await r.text();
+  if (!r.ok) throw new Error(raw || r.statusText);
+  return raw ? JSON.parse(raw) : null; // Results.Ok() with no body comes back as 200 + empty string, not 204
+}
+
+async function saveRow(serviceId, priceInput, durationInput, noteEl) {
+  const priceDollars = parseFloat(priceInput.value);
+  const durationMinutes = parseInt(durationInput.value, 10);
+
+  if (isNaN(priceDollars) || priceDollars < 0 || isNaN(durationMinutes) || durationMinutes <= 0) {
+    noteEl.textContent = 'Invalid price or duration.';
+    noteEl.style.color = '#a3241f';
+    return;
+  }
+
+  noteEl.textContent = 'Saving…';
+  noteEl.style.color = 'var(--muted)';
+  try {
+    await api(`/api/admin/services/${serviceId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ priceDollars, durationMinutes }),
+    });
+    noteEl.textContent = 'Saved ✓';
+    noteEl.style.color = '#1a7a3c';
+    if (typeof loadPriceHistory === 'function') await loadPriceHistory();
+  } catch (err) {
+    noteEl.textContent = 'Failed: ' + err.message;
+    noteEl.style.color = '#a3241f';
+  }
+}
+
+async function load() {
+  const categories = await api('/api/admin/services');
+  const container = document.getElementById('categories');
+  container.innerHTML = ''; // load() can be called again (e.g. after a bulk price rise) — don't duplicate
+
+  for (const cat of categories) {
+    if (!cat.services || cat.services.length === 0) continue;
+
+    const heading = document.createElement('h2');
+    heading.className = 'section-title';
+    heading.textContent = cat.name;
+    container.appendChild(heading);
+
+    const table = document.createElement('table');
+    table.className = 'services';
+    table.innerHTML = `
+      <colgroup>
+        <col class="col-service"><col class="col-price"><col class="col-duration"><col class="col-actions">
+      </colgroup>
+      <thead>
+        <tr><th>Service</th><th>Price ($)</th><th>Duration (min)</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector('tbody');
+
+    for (const s of cat.services) {
+      const tr = document.createElement('tr');
+      if (!s.isActive) tr.style.opacity = '0.5';
+      tr.innerHTML = `
+        <td>${s.name}${s.isActive ? '' : ' <span class="row-note">(inactive)</span>'}</td>
+        <td><input type="number" step="0.01" min="0" value="${s.priceDollars}"></td>
+        <td><input type="number" step="5" min="5" value="${s.durationMinutes}"></td>
+        <td><button class="pill-btn save-btn">Save</button><span class="row-note"></span></td>
+      `;
+      tbody.appendChild(tr);
+
+      const [priceInput, durationInput] = tr.querySelectorAll('input');
+      const saveBtn = tr.querySelector('.save-btn');
+      const note = tr.querySelector('.row-note');
+      saveBtn.onclick = () => saveRow(s.serviceId, priceInput, durationInput, note);
+    }
+
+    container.appendChild(table);
+  }
+}
+
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' });
+}
+
+async function loadPriceRiseStatus() {
+  const statusEl = document.getElementById('priceRiseStatus');
+  const btn = document.getElementById('bulkRiseBtn');
+  try {
+    const status = await api('/api/admin/services/price-rise-status');
+    const lastApplied = status.lastAppliedUtc;
+    const nextEligible = status.nextEligibleUtc;
+    const eligibleNow = status.eligibleNow;
+
+    if (!lastApplied) {
+      statusEl.textContent = 'No price rise has been applied yet.';
+    } else if (eligibleNow) {
+      statusEl.textContent = `Last applied ${fmtDate(lastApplied)}. Eligible for another rise now.`;
+    } else {
+      statusEl.textContent = `Last applied ${fmtDate(lastApplied)}. Next one isn't due until ${fmtDate(nextEligible)} — limited to once a year.`;
+    }
+    btn.disabled = !eligibleNow;
+  } catch (err) {
+    statusEl.textContent = 'Could not check price rise eligibility: ' + err.message;
+  }
+}
+
+document.getElementById('bulkRiseBtn').onclick = async () => {
+  const note = document.getElementById('bulkRiseNote');
+  const percentInput = document.getElementById('bulk-percent');
+  const percent = parseFloat(percentInput.value);
+
+  if (isNaN(percent) || percent <= 0) {
+    note.textContent = 'Enter a percentage greater than 0.';
+    note.style.color = '#a3241f';
+    return;
+  }
+  if (!confirm(`Raise every service's price by ${percent}%, rounded up to the nearest $5? This applies immediately and can only be done once a year.`)) {
+    return;
+  }
+
+  note.textContent = 'Applying…';
+  note.style.color = 'var(--muted)';
+  try {
+    const result = await api('/api/admin/services/bulk-price-increase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percentIncrease: percent }),
+    });
+    const updatedCount = result?.updatedCount ?? result?.UpdatedCount ?? 0;
+    note.textContent = `Done — ${updatedCount} price${updatedCount === 1 ? '' : 's'} updated ✓`;
+    note.style.color = '#1a7a3c';
+    await load();
+    await loadPriceRiseStatus();
+    await loadPriceHistory();
+  } catch (err) {
+    note.textContent = 'Failed: ' + err.message;
+    note.style.color = '#a3241f';
+  }
+};
+
+function money(dollars) {
+  return dollars.toLocaleString('en-AU', { style: 'currency', currency: 'AUD' });
+}
+
+async function loadPriceHistory() {
+  const body = document.getElementById('priceHistoryBody');
+  try {
+    const rows = await api('/api/admin/services/price-history');
+    if (rows.length === 0) {
+      body.innerHTML = '<p style="color:var(--muted);font-size:0.85rem;">No price changes recorded yet.</p>';
+      return;
+    }
+    const table = document.createElement('table');
+    table.className = 'history';
+    table.innerHTML = `
+      <thead><tr><th>Date</th><th>Service</th><th>Change</th><th>Type</th></tr></thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector('tbody');
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      const when = new Date(r.changedAtUtc).toLocaleString('en-AU', {
+        day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Australia/Sydney'
+      });
+      tr.innerHTML = `
+        <td>${when}</td>
+        <td>${r.serviceName}</td>
+        <td>${money(r.oldPriceDollars)} → ${money(r.newPriceDollars)}</td>
+        <td><span class="tag ${r.changeType === 'CPI' ? 'cpi' : ''}">${r.changeType}</span></td>
+      `;
+      tbody.appendChild(tr);
+    }
+    body.innerHTML = '';
+    body.appendChild(table);
+  } catch (err) {
+    body.innerHTML = `<p style="color:#a3241f;font-size:0.85rem;">Couldn't load history: ${err.message}</p>`;
+  }
+}
+
+load();
+loadPriceRiseStatus();
+loadPriceHistory();
+</script>
+</body>
+</html>

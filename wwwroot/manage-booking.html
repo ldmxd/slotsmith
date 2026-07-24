@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage your booking — SlotSmith</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { padding-bottom: 40px; }
+  .field-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .field-row .label { color: var(--muted); }
+  .field-row .value { font-weight: 600; text-align: right; }
+  .actions { margin: 24px 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .cancelled-note { margin: 20px; padding: 14px; border-radius: 10px; background: var(--panel); color: var(--muted); }
+  #rescheduleForm input[type=date] { padding: 10px; border-radius: 8px; border: 1px solid var(--border); margin: 0 20px 12px; }
+</style>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/index.html"><span class="brand-mark"></span>Your booking</a></header>
+<main>
+  <div id="banner"></div>
+  <div id="content"></div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get('token');
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const raw = await r.text();
+  if (!r.ok) {
+    const err = new Error(raw || r.statusText);
+    err.status = r.status;
+    throw err;
+  }
+  return raw ? JSON.parse(raw) : null; // Results.Ok() with no body comes back as 200 + empty string, not 204
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString('en-AU', {
+    weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit',
+    timeZone: 'Australia/Sydney'
+  });
+}
+
+function money(cents) {
+  return (cents / 100).toLocaleString('en-AU', { style: 'currency', currency: 'AUD' });
+}
+
+let booking = null;
+let rescheduleDate = toLocalDateInputValue(new Date().toISOString());
+let rescheduleDateInitialized = false;
+let rescheduleSlots = [];
+let selectedSlot = null;
+
+// en-CA locale formats as YYYY-MM-DD, which is exactly what <input type=date> wants —
+// convenient way to get a venue-local (not UTC, not browser-local) date string.
+function toLocalDateInputValue(iso) {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+}
+
+async function load() {
+  if (!token) {
+    document.getElementById('banner').innerHTML = `<div class="banner error">No booking token supplied.</div>`;
+    return;
+  }
+  try {
+    booking = await api(`/api/bookings/manage/${token}`);
+    if (!rescheduleDateInitialized && booking.status !== 'Cancelled') {
+      // Default the reschedule date picker to the booking's own day rather than today —
+      // that's the day most likely to still have an opening.
+      rescheduleDate = toLocalDateInputValue(booking.startUtc);
+      rescheduleDateInitialized = true;
+    }
+    render();
+  } catch (err) {
+    console.error('Failed to load booking', err.status, err.message);
+    const friendly = err.status === 404
+      ? "Couldn't find that booking. It may have already been cancelled, or the link is incorrect."
+      : `Something went wrong loading this booking (${err.status ?? 'network error'}). Check the browser console / server log for details.`;
+    document.getElementById('banner').innerHTML = `<div class="banner error">${friendly}</div>`;
+  }
+}
+
+function render() {
+  const content = document.getElementById('content');
+
+  if (booking.status === 'Cancelled') {
+    content.innerHTML = `
+      <div class="cancelled-note"><strong>This booking has been cancelled.</strong></div>
+      <div style="margin:0 20px;">
+        <div class="field-row"><span class="label">Service</span><span class="value">${booking.serviceNames.join(', ')}</span></div>
+        <div class="field-row"><span class="label">With</span><span class="value">${booking.staffName}</span></div>
+        <div class="field-row"><span class="label">Was</span><span class="value">${fmtDate(booking.startUtc)}</span></div>
+      </div>
+      <div class="actions">
+        <a class="pill-btn primary" href="/booking.html" style="text-decoration:none;display:inline-block;">Book a new appointment</a>
+      </div>
+    `;
+    return;
+  }
+
+  content.innerHTML = `
+    <div style="margin:0 20px;">
+      <div class="field-row"><span class="label">Service</span><span class="value">${booking.serviceNames.join(', ')}</span></div>
+      <div class="field-row"><span class="label">With</span><span class="value">${booking.staffName}</span></div>
+      <div class="field-row"><span class="label">When</span><span class="value">${fmtDate(booking.startUtc)}</span></div>
+      <div class="field-row"><span class="label">Total</span><span class="value">${money(booking.totalPriceCents)}</span></div>
+    </div>
+    <div class="actions">
+      <button class="pill-btn" id="rescheduleBtn">Reschedule</button>
+      <button class="pill-btn" id="cancelBtn" style="border-color:#a3241f;color:#a3241f;">Cancel booking</button>
+    </div>
+    <div id="rescheduleForm" style="display:none;">
+      <h2 class="section-title">Pick a new time</h2>
+      <input type="date" id="rescheduleDate" value="${rescheduleDate}" min="${toLocalDateInputValue(new Date().toISOString())}">
+      <div id="slotsContainer"></div>
+      <div class="actions">
+        <button class="pill-btn primary" id="confirmRescheduleBtn" disabled>Confirm new time</button>
+      </div>
+      <p style="margin:0 20px 20px;color:var(--muted);font-size:0.85rem;">
+        Don't see a time that works with ${booking.staffName}? Cancel this booking above, then
+        <a href="/booking.html">book a new appointment</a> — you can pick a different stylist or day from scratch.
+      </p>
+    </div>
+  `;
+
+  document.getElementById('rescheduleBtn').onclick = async () => {
+    document.getElementById('rescheduleForm').style.display = 'block';
+    await loadRescheduleSlots();
+  };
+
+  document.getElementById('rescheduleDate').onchange = async (e) => {
+    rescheduleDate = e.target.value;
+    selectedSlot = null;
+    await loadRescheduleSlots();
+  };
+
+  document.getElementById('confirmRescheduleBtn').onclick = async () => {
+    if (!selectedSlot) return;
+    document.getElementById('banner').innerHTML = '';
+    try {
+      await api(`/api/bookings/manage/${token}/reschedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newStartUtc: selectedSlot.startUtc ?? selectedSlot.StartUtc }),
+      });
+      selectedSlot = null;
+      document.getElementById('banner').innerHTML = `<div class="banner">Booking rescheduled.</div>`;
+      await load();
+    } catch (err) {
+      document.getElementById('banner').innerHTML = `<div class="banner error">Couldn't reschedule: ${err.message}</div>`;
+    }
+  };
+
+  document.getElementById('cancelBtn').onclick = async () => {
+    if (!confirm('Cancel this booking?')) return;
+    document.getElementById('banner').innerHTML = '';
+    try {
+      await api(`/api/bookings/manage/${token}/cancel`, { method: 'POST' });
+      document.getElementById('banner').innerHTML = `<div class="banner">Booking cancelled.</div>`;
+      await load();
+    } catch (err) {
+      document.getElementById('banner').innerHTML = `<div class="banner error">Couldn't cancel: ${err.message}</div>`;
+    }
+  };
+}
+
+async function loadRescheduleSlots() {
+  const container = document.getElementById('slotsContainer');
+  container.innerHTML = `<div class="empty-state" style="margin:16px 20px;">Loading times…</div>`;
+  try {
+    rescheduleSlots = await api('/api/availability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serviceIds: booking.serviceIds, staffId: booking.staffId, date: rescheduleDate, excludeBookingToken: token }),
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="empty-state" style="margin:16px 20px;">Couldn't load times: ${err.message}</div>`;
+    return;
+  }
+  renderSlots();
+}
+
+function renderSlots() {
+  const container = document.getElementById('slotsContainer');
+  const confirmBtn = document.getElementById('confirmRescheduleBtn');
+
+  if (rescheduleSlots.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="margin:16px 20px;">No availability that day — try another date.</div>`;
+    if (confirmBtn) confirmBtn.disabled = true;
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'slots-grid';
+  for (const slot of rescheduleSlots) {
+    const start = new Date(slot.startUtc ?? slot.StartUtc);
+    const btn = document.createElement('button');
+    const isSelected = selectedSlot && (selectedSlot.startUtc ?? selectedSlot.StartUtc) === (slot.startUtc ?? slot.StartUtc);
+    btn.className = 'slot-btn' + (isSelected ? ' selected' : '');
+    btn.textContent = start.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: 'Australia/Sydney' });
+    btn.onclick = () => {
+      selectedSlot = slot;
+      confirmBtn.disabled = false;
+      renderSlots();
+    };
+    grid.appendChild(btn);
+  }
+  container.innerHTML = '';
+  container.appendChild(grid);
+}
+
+load();
+</script>
+</body>
+</html>

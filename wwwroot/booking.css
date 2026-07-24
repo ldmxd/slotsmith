@@ -3,9 +3,18 @@
   --ink: #1a1a1a;
   --muted: #6b6258;
   --accent: #6c5ce7;
+  --accent-dark: #5a48d6;
   --accent-ink: #ffffff;
   --border: #e5e2dd;
   --panel: #f7f5f2;
+  --success: #1a7a3c;
+  --success-bg: #eafaf0;
+  --danger: #a3241f;
+  --danger-bg: #fbeaea;
+  --radius: 14px;
+  --shadow-sm: 0 1px 2px rgba(26, 26, 26, 0.05);
+  --shadow-md: 0 4px 16px rgba(26, 26, 26, 0.07);
+  --shadow-lift: 0 8px 24px rgba(26, 26, 26, 0.1);
 }
 * { box-sizing: border-box; }
 body {
@@ -14,33 +23,56 @@ body {
   color: var(--ink);
   background: var(--bg);
   padding-bottom: 88px; /* leave room for the sticky cart bar */
+  -webkit-font-smoothing: antialiased;
 }
+a { color: var(--accent-dark); }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
 header.topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  gap: 16px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 header.topbar button {
   background: none;
   border: none;
   font-size: 1.4rem;
   cursor: pointer;
+  color: var(--ink);
 }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.05rem; }
+a.brand { color: inherit; text-decoration: none; }
+.brand .brand-mark {
+  width: 26px; height: 26px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  flex-shrink: 0;
+}
+
+/* ── Typography ─────────────────────────────────────────────────────── */
 h1.step-title {
   font-size: 1.7rem;
   font-weight: 800;
-  margin: 20px 20px 8px;
+  margin: 22px 20px 8px;
+  letter-spacing: -0.01em;
 }
 h2.section-title {
-  font-size: 1rem;
+  font-size: 0.8rem;
   font-weight: 700;
-  margin: 24px 20px 10px;
+  margin: 26px 20px 10px;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
 }
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
 .card {
   display: flex;
   align-items: center;
@@ -48,11 +80,14 @@ h2.section-title {
   margin: 12px 20px;
   padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--bg);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
 .card.selectable { cursor: pointer; }
-.card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card.selectable:hover { box-shadow: var(--shadow-md); border-color: #d8d3cb; }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 1.5px var(--accent), var(--shadow-md); }
 .avatar {
   width: 52px;
   height: 52px;
@@ -64,27 +99,44 @@ h2.section-title {
   font-weight: 700;
   color: var(--muted);
   flex-shrink: 0;
+  overflow: hidden;
 }
-.card-body { flex: 1; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.card-body { flex: 1; min-width: 0; }
 .card-title { font-weight: 700; font-size: 1.05rem; }
 .card-sub { color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
 .pill-btn {
   border: 1px solid var(--ink);
   background: var(--bg);
+  color: var(--ink);
   border-radius: 999px;
   padding: 8px 18px;
   font-weight: 600;
+  font-size: 0.95rem;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.05s ease, opacity 0.15s ease;
 }
+.pill-btn:hover { background: var(--panel); }
+.pill-btn:active { transform: scale(0.98); }
+.pill-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.pill-btn:disabled:hover { background: var(--bg); }
 .pill-btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+.pill-btn.primary:hover { background: #333; }
+
+/* ── Selection dots ─────────────────────────────────────────────────── */
 .checkbox-dot {
   width: 22px;
   height: 22px;
   border-radius: 50%;
   border: 2px solid var(--border);
   flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .checkbox-dot.checked { background: var(--accent); border-color: var(--accent); }
+
+/* ── Sticky cart bar ────────────────────────────────────────────────── */
 .cart-bar {
   position: fixed;
   bottom: 0; left: 0; right: 0;
@@ -94,6 +146,7 @@ h2.section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  box-shadow: 0 -6px 20px rgba(26, 26, 26, 0.06);
 }
 .cart-bar .price { font-weight: 800; font-size: 1.2rem; }
 .cart-bar .meta { color: var(--muted); font-size: 0.85rem; }
@@ -106,8 +159,13 @@ h2.section-title {
   font-weight: 700;
   font-size: 1rem;
   cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
 }
+.cart-bar button:hover:not(:disabled) { background: #333; }
+.cart-bar button:active:not(:disabled) { transform: scale(0.98); }
 .cart-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Time slots ─────────────────────────────────────────────────────── */
 .slots-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
@@ -121,8 +179,13 @@ h2.section-title {
   background: var(--bg);
   cursor: pointer;
   font-weight: 600;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.05s ease;
 }
+.slot-btn:hover { border-color: var(--accent); }
+.slot-btn:active { transform: scale(0.97); }
 .slot-btn.selected { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* ── Forms ──────────────────────────────────────────────────────────── */
 form.details-form { margin: 0 20px; display: flex; flex-direction: column; gap: 4px; }
 form.details-form label {
   font-size: 0.85rem;
@@ -136,7 +199,50 @@ form.details-form input, form.details-form textarea {
   border-radius: 10px;
   border: 1px solid var(--border);
   font-size: 1rem;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+form.details-form input:focus, form.details-form textarea:focus,
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.15);
+}
+
+/* ── Misc states ────────────────────────────────────────────────────── */
 .empty-state { margin: 40px 20px; color: var(--muted); text-align: center; }
-.confirm-box { margin: 30px 20px; text-align: center; }
+.confirm-box { margin: 40px 20px; text-align: center; }
 .confirm-box h1 { font-size: 1.8rem; }
+.confirm-icon {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: var(--success-bg); color: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px; font-size: 2rem;
+}
+
+/* ── Admin nav (see admin-nav.js) ──────────────────────────────────── */
+.admin-nav { display: flex; align-items: center; gap: 4px; }
+.admin-nav a {
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.admin-nav a:hover { background: var(--panel); color: var(--ink); }
+.admin-nav a.active { background: var(--ink); color: #fff; }
+.admin-nav .logout-link {
+  margin-left: 8px;
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-decoration: none;
+  border-left: 1px solid var(--border);
+}
+.admin-nav .logout-link:hover { color: var(--danger); }
+
+/* ── Banners ────────────────────────────────────────────────────────── */
+.banner { margin: 20px; padding: 14px 16px; border-radius: 12px; background: var(--success-bg); color: var(--success); font-weight: 600; box-shadow: var(--shadow-sm); }
+.banner.error { background: var(--danger-bg); color: var(--danger); }

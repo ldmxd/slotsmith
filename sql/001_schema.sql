@@ -59,7 +59,9 @@ CREATE TABLE dbo.Booking (
     CalendarProvider   NVARCHAR(20)    NULL,                          -- Google | Microsoft | NULL (staff not connected)
     CalendarEventId    NVARCHAR(200)   NULL,
     Notes              NVARCHAR(500)   NULL,
-    CreatedAt          DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME()
+    ManageToken         NVARCHAR(64)   NOT NULL,   -- opaque random token; "manage my booking" links use this instead of login
+    CreatedAt          DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT UQ_Booking_ManageToken UNIQUE (ManageToken)
 );
 
 CREATE TABLE dbo.BookingItem (
@@ -81,6 +83,7 @@ CREATE TABLE dbo.CalendarConnection (
     RefreshTokenEncrypted   NVARCHAR(MAX) NOT NULL,
     TokenExpiresUtc         DATETIME2     NOT NULL,
     ConnectedAt             DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME(),
+    CalendarId              NVARCHAR(400) NULL,   -- which of the account's calendars to use; NULL = provider's default until picked
     CONSTRAINT UQ_CalendarConnection_Staff_Provider UNIQUE (StaffId, Provider)
 );
 
@@ -89,4 +92,31 @@ CREATE TABLE dbo.BusinessHours (
     DayOfWeek   TINYINT PRIMARY KEY,   -- 0=Sunday .. 6=Saturday
     OpenTime    TIME    NULL,
     CloseTime   TIME    NULL
+);
+
+-- One row per price change to any service, whether from a single manual edit in
+-- services-admin.html ('Manual') or a bulk CPI rise ('CPI'). Doubles as the "once a year" gate
+-- on the CPI rise: the API refuses to apply another one within 365 days of the most recent
+-- ChangedAtUtc where ChangeType = 'CPI'.
+CREATE TABLE dbo.ServicePriceHistory (
+    ServicePriceHistoryId INT IDENTITY(1,1) PRIMARY KEY,
+    ServiceId       INT             NOT NULL REFERENCES dbo.Service(ServiceId),
+    OldPriceCents   INT             NOT NULL,
+    NewPriceCents   INT             NOT NULL,
+    ChangeType      NVARCHAR(20)    NOT NULL,   -- 'Manual' | 'CPI'
+    ChangedAtUtc    DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+-- A stylist unavailable for a date range (e.g. taking a week off). Blocks new bookings/
+-- reschedules for that range (fed into AvailabilityEngine as another busy-interval source) and
+-- drives the "please reschedule" email sent to anyone already booked in that window.
+CREATE TABLE dbo.StaffTimeOff (
+    TimeOffId         INT           IDENTITY(1,1) PRIMARY KEY,
+    StaffId           INT           NOT NULL REFERENCES dbo.Staff(StaffId),
+    StartUtc          DATETIME2     NOT NULL,
+    EndUtc            DATETIME2     NOT NULL,
+    Reason            NVARCHAR(200) NULL,
+    CalendarProvider  NVARCHAR(20)  NULL,   -- Google | Microsoft | NULL (staff not connected)
+    CalendarEventId   NVARCHAR(200) NULL,   -- the "day off" block on the stylist's calendar, if any
+    CreatedAt         DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
 );

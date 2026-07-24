@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlotSmith — Admin login</title>
+<link rel="stylesheet" href="booking.css">
+<style>
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 16px; }
+  .back-home { color: var(--muted); font-size: 0.85rem; text-decoration: none; }
+  .back-home:hover { color: var(--ink); }
+  .login-box { width: 320px; padding: 28px; border: 1px solid var(--border); border-radius: 14px; }
+  .login-box h1 { font-size: 1.3rem; margin: 0 0 18px; }
+  .login-box input { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); font-size: 1rem; margin-bottom: 12px; }
+  .login-box button { width: 100%; padding: 12px; border-radius: 10px; border: none; background: var(--ink); color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer; }
+  .login-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .error-note { color: #a3241f; font-size: 0.85rem; margin: -4px 0 12px; }
+</style>
+</head>
+<body>
+  <a class="back-home" href="/index.html">&larr; Back to SlotSmith</a>
+  <form class="login-box" id="loginForm">
+    <h1>Admin login</h1>
+    <div class="error-note" id="errorNote" style="display:none;"></div>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password" autofocus required>
+    <button type="submit" id="loginBtn">Log in</button>
+  </form>
+
+<script>
+const params = new URLSearchParams(location.search);
+const next = params.get('next') || '/admin.html';
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const errorNote = document.getElementById('errorNote');
+  const password = document.getElementById('password').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Logging in…';
+  errorNote.style.display = 'none';
+
+  try {
+    const r = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (r.ok) {
+      location.href = next;
+      return;
+    }
+    errorNote.textContent = r.status === 401 ? 'Wrong password.' : 'Something went wrong — try again.';
+    errorNote.style.display = 'block';
+  } catch (err) {
+    errorNote.textContent = 'Network error — try again.';
+    errorNote.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Log in';
+  }
+});
+</script>
+</body>
+</html>

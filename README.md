@@ -31,6 +31,13 @@ a third (iCloud, CalDAV) means writing one more class — nothing else in the bo
 changes. Both talk to their provider's REST API directly with `HttpClient` rather than pulling
 in the full Google.Apis / Microsoft.Graph SDKs, to keep the dependency footprint small.
 
+## Branding config
+
+Staying generic means the business name isn't hardcoded anywhere in the front end. It lives in
+`appsettings.json` under `App:BusinessName`, served publicly via `GET /api/business-info`, and
+picked up by `booking.html` (header) and `index.html` (hero heading) on load. Pointing this at a
+different client is a one-line config change, not a code change.
+
 ## Structure
 
 ```
@@ -49,10 +56,20 @@ SlotSmith.Api/
 │   └── Records.cs
 ├── sql/
 │   ├── 001_schema.sql
-│   └── 002_seed_demo.sql           # ATSI-modelled demo data — NOT their real full price list
+│   ├── 002_seed_demo.sql              # ATSI-modelled demo data — NOT their real full price list
+│   ├── 003_add_calendar_id.sql        # Migration: adds CalendarConnection.CalendarId
+│   ├── 004_add_manage_token.sql       # Migration: adds Booking.ManageToken
+│   ├── 005_add_price_rise_history.sql # Migration: adds PriceRiseHistory (once-a-year CPI rise gate)
+│   ├── 006_add_staff_time_off.sql     # Migration: adds StaffTimeOff
+│   └── 007_add_time_off_calendar_event.sql # Migration: adds StaffTimeOff.CalendarProvider/CalendarEventId
 ├── wwwroot/
 │   ├── booking.html/.css/.js       # Customer-facing booking flow (services → staff → time → confirm)
-│   └── admin.html                  # Staff calendar-linking page
+│   ├── admin-login.html            # Shared-password login for the admin pages below
+│   ├── bookings-admin.html         # Search bookings by client, hand off to manage-booking.html
+│   ├── admin.html                  # Staff calendar-linking page
+│   ├── services-admin.html         # Price/duration editor + once-a-year CPI bulk price rise
+│   ├── staff-admin.html            # Add/deactivate stylists, assign services, time off
+│   └── manage-booking.html         # Customer self-service: view / reschedule / cancel via emailed link
 ├── Dockerfile                      # ASP.NET 8, listens on 8080
 └── README.md
 ```
@@ -71,6 +88,49 @@ SlotSmith.Api/
   no-show protection. This doesn't yet — worth discussing with the salon owner what he
   actually needs there before assuming "no Fresha fee" is the whole pitch.
 - **Single venue, single timezone** (`Australia/Sydney` hardcoded in `Program.cs`).
+- **Admin auth is a single shared password, not per-person accounts.** `admin.html`,
+  `services-admin.html`, `staff-admin.html`, and their backing `/api/admin/*` +
+  `/api/calendar/*` endpoints all require logging in at `/admin-login.html` first (cookie-based,
+  30-day sliding expiry). One password for everyone who needs admin access (Mark, Angelo) —
+  fine for a two-person demo, not how you'd do it once there's a real staff roster with
+  different permission levels. See "Admin login" below for setup.
+- **Deactivating a stylist doesn't touch their existing future bookings.** `staff-admin.html`
+  only hides them from new bookings (`IsActive = 0`); anything already booked with them stays
+  as-is. Fine for a demo — cancelling/reassigning those would need to be a deliberate,
+  separate action in a real version, not an automatic side effect of deactivating someone.
+- **A calendar-linked stylist isn't required to be bookable.** Staff without a connected
+  Google/Outlook calendar can still take bookings — availability just falls back to this app's
+  own `Booking` table only (no overlay of their personal calendar's busy times). Worth knowing:
+  it means the system can't see conflicts with anything not booked through SlotSmith itself for
+  an unconnected stylist.
+- **Bot mitigation is deliberately lightweight**: a honeypot field, a minimum
+  time-to-submit check, and a 5-bookings-per-hour-per-IP rate limit on `POST /api/bookings`
+  (`Program.cs`). This stops basic scripted abuse, not a determined attacker — there's no
+  CAPTCHA. If ATSI sees real spam, the next step would be Cloudflare Turnstile in front of the
+  booking form.
+- **Manage-booking tokens don't expire.** `manage-booking.html?token=...` works forever once
+  issued. Reasonable for a demo; a real version might expire tokens after the appointment date.
+- **Confirmation/reschedule emails include a hand-built `.ics` calendar attachment** (no
+  library — `BuildIcsContent` in `Program.cs`), so the customer can add the appointment to
+  Google/Outlook/Apple Calendar etc. Both use the same `UID` (`{manageToken}@slotsmith`) so a
+  reschedule's `.ics` can update the original event in calendar apps that support that — but
+  there's no real per-booking `SEQUENCE` counter behind it (reschedule is hardcoded to
+  `SEQUENCE:1`), so a second reschedule won't necessarily supersede the first correctly. Resend's
+  API doesn't let you override the attachment's Content-Type to force `text/calendar`, but every
+  major mail client still recognises `.ics` by file extension. The cancellation email doesn't
+  attach one — there's nothing to add, and reliably auto-removing an event via a plain file
+  attachment (not a full organizer/attendee invite flow) isn't guaranteed across clients anyway.
+- **Customer email is format-validated, not ownership-verified.** `POST /api/bookings` rejects
+  malformed addresses (via `MailAddress` + a domain-has-a-dot check) but doesn't confirm the
+  customer can actually receive mail there — no confirm-your-email step before the booking is
+  finalized. Same trade-off Fresha/Calendly make: verifying ownership means a magic-link/OTP step
+  in the funnel, which costs more conversions than it's worth for a low-stakes salon booking. A
+  bad address just means that customer doesn't get their own confirmation/reminder emails.
+- **Staff photo uploads are validated but not deeply sanitized** — content-type + extension +
+  5MB size check, no magic-byte sniffing or image re-encoding. Fine behind the admin login for
+  two trusted uploaders; a public-facing upload surface would need more hardening.
+- **Uploaded photos need a Docker volume mount in production** (`wwwroot/uploads/staff`) — see
+  the deploy command below. Without it, photos vanish on the next redeploy.
 - I could not compile this in the sandbox I built it in — no .NET SDK / internet access there.
   **Run `dotnet build` before deploying anywhere.**
 
@@ -90,16 +150,36 @@ sqlcmd -S localhost,1433 -U sa -P <password> -d SlotSmith -i sql/002_seed_demo.s
 export SLOTSMITH_SQL="Server=localhost,1433;Database=SlotSmith;User Id=sa;Password=<password>;TrustServerCertificate=True"
 ```
 
-### 3. Run
+### 3. Admin password
+
+```bash
+dotnet user-secrets set "Admin:Password" "<pick something>"
+```
+
+Without this, `appsettings.json` has a `YOUR_ADMIN_PASSWORD` placeholder and `/api/admin/login`
+fails closed (500, not "accepts anything") — same convention as the Resend API key.
+
+### 4. Run
 
 ```bash
 dotnet run
 # open http://localhost:5080/booking.html
+# admin pages: http://localhost:5080/admin-login.html
 ```
 
 Calendar linking (`admin.html`) will fail until you've registered OAuth apps — see below.
 Everything else (browsing services, picking a time against business hours + existing bookings)
 works without it.
+
+## Admin login
+
+`admin.html`, `services-admin.html`, and `staff-admin.html` (calendar linking, pricing, staff)
+all sit behind `/admin-login.html` — a single shared password, checked against `Admin:Password`
+(see setup above), backed by a cookie (`slotsmith_admin`, 30-day sliding expiry). There's no
+per-person login and no password reset flow; if the password needs to change, update the config
+value and everyone logs in again. Good enough for the two people (Mark, Angelo) who need access
+during the demo — revisit if this becomes a real multi-tenant product with different staff
+needing different permissions.
 
 ## Google Calendar setup
 
@@ -156,9 +236,113 @@ in the same running instance: connect one test staff member's Google calendar an
 Outlook calendar, then book against both from `/booking.html` and confirm events land in the
 right place and busy times from each are respected.
 
+## Picking which calendar to use
+
+An account can have more than one calendar (a personal one and a separate work one, say), so
+`GetBusyTimesAsync`/`CreateEventAsync` don't just assume the account's default. After connecting
+in `/admin.html`, a dropdown of that account's calendars appears — pick the right one and hit
+"Use this calendar". Until a choice is saved, it falls back to the provider's default calendar
+(`primary` for Google, the mailbox's default for Outlook), so connecting still works immediately
+even if you skip this step.
+
+If you created your local database before this existed, run the migration first:
+
+```bash
+sqlcmd -S 127.0.0.1,1435 -U sa -P 'YourPassword!' -d SlotSmith -i sql/003_add_calendar_id.sql
+```
+
+## Manage-my-booking links and service pricing
+
+Every booking gets a random `ManageToken` at creation time; the confirmation email includes a
+link to `manage-booking.html?token=...` where the customer can view, reschedule, or cancel
+without logging in. Reschedule is implemented as cancel-old-event + create-new-event on the
+linked calendar (no `UpdateEventAsync` on `ICalendarProvider` — kept the interface smaller).
+
+Angelo (or any staff member) edits prices and durations at `/services-admin.html`, which reads/
+writes via `GET/PUT /api/admin/services` (behind the admin login — see "Admin login" above).
+
+If you created your local database before `ManageToken` existed, run the migration first:
+
+```bash
+sqlcmd -S 127.0.0.1,1435 -U sa -P 'YourPassword!' -d SlotSmith -i sql/004_add_manage_token.sql
+```
+
+### Staff-assisted changes (phone-in requests)
+
+`bookings-admin.html` loads with the next 100 upcoming confirmed bookings, soonest first
+(`GET /api/admin/bookings/upcoming`), so something like "tomorrow's 2pm" is visible without
+typing anything. Searching (`GET /api/admin/bookings/search?q=...` — a client's name, email, or
+phone, `LIKE '%q%'` against `dbo.Customer`, min 2 characters) switches to matching bookings of any
+status, past and present, so staff can also find something already cancelled or further out.
+Rather than building a second reschedule/cancel implementation for staff, each result just links
+to `/manage-booking.html?token=...` using that booking's own `ManageToken` (safe to expose here
+since both endpoints are behind admin auth): staff click through and use the exact same tested
+flow a customer would, on the customer's behalf. Search matching is a plain `LIKE`, so a query
+containing `%` or `_` behaves like a SQL wildcard rather than a literal character — a cosmetic
+edge case, not worth escaping for a demo.
+
+### Price change history + the once-a-year CPI rise
+
+Every price change — a single manual edit or a bulk CPI rise — gets logged to
+`dbo.ServicePriceHistory` (service, old price, new price, `ChangeType` of `Manual` or `CPI`,
+timestamp). `services-admin.html` has a collapsible "Price change history" section at the
+bottom reading it back via `GET /api/admin/services/price-history`.
+
+The bulk CPI rise button (`POST /api/admin/services/bulk-price-increase`) raises every service's
+price by X%, rounded up to the nearest $5, and is capped to once every 365 days — the API
+derives "last applied" from the most recent `CPI`-tagged row in that same history table (via
+`GET /api/admin/services/price-rise-status`) rather than a separate counter, so the gate and the
+audit trail can never drift out of sync. Manual single-service edits aren't subject to this
+cooldown — only the bulk action is.
+
+If you created your local database before this existed, run the migration:
+
+```bash
+sqlcmd -S 127.0.0.1,1435 -U sa -P 'YourPassword!' -d SlotSmith -i sql/005_add_price_rise_history.sql
+```
+
+## Staff time off
+
+`staff-admin.html` has a "Time off" section per stylist (start date, end date, optional reason).
+Adding a range does three things:
+
+1. Blocks that range from new bookings/reschedules — `dbo.StaffTimeOff` rows are fed into
+   `AvailabilityEngine` as another busy-interval source, right alongside existing bookings and
+   the stylist's connected calendar (`GetStaffTimeOffBusyAsync` in `BookingRepository.cs`).
+   `POST /api/bookings` also hard-rejects a request that lands in a time-off window, since that
+   endpoint otherwise trusts the client's chosen slot rather than re-validating it server-side —
+   see the comment there.
+2. If the stylist has a connected calendar, creates a "Time off — <reason>" block on it for the
+   whole range, so it's visible when they check their own calendar directly, not just inside
+   SlotSmith. Removing a time-off entry (the "Remove" button) cancels that calendar event too.
+   It's a timed event (venue-local midnight to midnight), not a native all-day event — Google/
+   Outlook will show it as a long block rather than in the special all-day banner, which is
+   cosmetic but worth knowing.
+3. Emails everyone already booked with that stylist during the new range
+   (`GET /api/admin/staff/{id}/time-off` lists existing ranges,
+   `POST /api/admin/staff/{id}/time-off` creates one and does the notification). The email points
+   at the customer's existing `manage-booking.html` link so they pick a new time or cancel
+   themselves.
+
+**Deliberately not automatic:** an existing booking that falls inside a new time-off range is left
+completely alone — status stays `Confirmed`, its own calendar event (if any) is untouched, so the
+stylist's calendar will show a real double-booking (the time-off block *and* the original
+appointment) until the customer reschedules or cancels via the emailed link. There's also no
+tracking of who has/hasn't responded yet; if a customer ignores the email, staff would need to
+notice and follow up manually (e.g. by checking `GET /api/admin/staff/{id}/time-off` against the
+booking list).
+
+If you created your local database before this existed, run both migrations:
+
+```bash
+sqlcmd -S 127.0.0.1,1435 -U sa -P 'YourPassword!' -d SlotSmith -i sql/006_add_staff_time_off.sql
+sqlcmd -S 127.0.0.1,1435 -U sa -P 'YourPassword!' -d SlotSmith -i sql/007_add_time_off_calendar_event.sql
+```
+
 ## Deployment to the droplet
 
-Same Docker pattern as `DrinksExpress.Web`. Next free port: **8084**.
+Now deployed on its own domain, `slotsmith.com.au` (bought July 2026) — not a subdomain of
+mihoknows. Same Docker pattern as `DrinksExpress.Web`. Next free port: **8084**.
 
 ```bash
 cd /var/www
@@ -171,7 +355,9 @@ sudo docker run -d \
   --restart unless-stopped \
   --network oceanswimmer_default \
   -p 127.0.0.1:8084:8080 \
-  -e SLOTSMITH_SQL="Server=oceanswimmer_sqlserver,1433;Database=SlotSmith;User Id=sa;Password=<password>;TrustServerCertificate=True" \
+  -v /var/www/slotsmith-uploads:/app/wwwroot/uploads \
+  -e SLOTSMITH_SQL="Server=sqlserver,1433;Database=SlotSmith;User Id=sa;Password=<password>;TrustServerCertificate=True" \
+  -e Admin__Password="<...>" \
   -e Calendar__Google__ClientId="<...>" \
   -e Calendar__Google__ClientSecret="<...>" \
   -e Calendar__Microsoft__ClientId="<...>" \
@@ -180,15 +366,16 @@ sudo docker run -d \
   slotsmith-web
 ```
 
-Reverse-proxy it as its own subdomain rather than a path under mihoknows — Google/Microsoft's
-OAuth redirect URI matching is more reliable against a subdomain than a proxied sub-path, and
-it keeps the door open to pointing `booking.mihoknows.com.au`'s DNS at a different box entirely
-later without touching the mihoknows site. New server block,
-`/etc/nginx/sites-available/booking.mihoknows`:
+The `-v` mount matters: staff photos uploaded via `staff-admin.html` get written to
+`wwwroot/uploads/staff` inside the container. Without that mount, every redeploy (`docker build`
++ fresh `docker run`) wipes them, since the rebuilt image starts from the Dockerfile's `COPY`
+again with nothing in that folder.
+
+New server block, `/etc/nginx/sites-available/slotsmith`:
 
 ```nginx
 server {
-    server_name booking.mihoknows.com.au;
+    server_name slotsmith.com.au www.slotsmith.com.au;
 
     location / {
         proxy_pass http://127.0.0.1:8084;
@@ -204,14 +391,25 @@ server {
 ```
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/booking.mihoknows /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/slotsmith /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
-sudo certbot --nginx -d booking.mihoknows.com.au
+sudo certbot --nginx -d slotsmith.com.au -d www.slotsmith.com.au
 ```
 
-Add an A record for `booking.mihoknows.com.au` → `170.64.145.69` before running certbot,
-same as any other subdomain.
+Add A records for `slotsmith.com.au` and `www.slotsmith.com.au` → `170.64.145.69` at the
+registrar before running certbot, same as any other domain.
+
+**Google/Microsoft OAuth consoles** also need their allowed redirect URIs updated to
+`https://slotsmith.com.au/api/calendar/{Google,Microsoft}/callback` — `appsettings.json` changing
+isn't enough on its own, the provider's own app registration has to match or the OAuth callback
+gets rejected.
+
+`booking.mihoknows.com.au` (the old demo host, still has its own server block/cert) can either
+keep serving the same container — add `booking.mihoknows.com.au` as another `server_name` on the
+block above and it works unmodified since it's the same proxy target — or 301-redirect to
+`slotsmith.com.au` if the plan is to stop using the old link entirely. Whatever's chosen, update
+`MihoKnows.Site`'s "Book now" button to point at the new domain either way.
 
 ## Next steps
 

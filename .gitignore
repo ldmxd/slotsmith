@@ -5,3 +5,5 @@ obj/
 keys/
 appsettings.Local.json
 *.user
+wwwroot/uploads/
+*.bak
