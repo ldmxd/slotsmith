@@ -918,6 +918,13 @@ static bool IsValidEmail(string email)
     }
 }
 
+// Same "1h 30m" / "45 mins" format used on the booking flow and manage-booking page
+// (booking.js's durationText, manage-booking.html's fmtDuration) — kept in sync across all three.
+static string FormatDuration(int totalMinutes) =>
+    totalMinutes >= 60
+        ? $"{totalMinutes / 60}h" + (totalMinutes % 60 != 0 ? $" {totalMinutes % 60}m" : "")
+        : $"{totalMinutes} mins";
+
 // Minimal iCalendar (RFC 5545) VEVENT, built by hand rather than pulling in a library for one
 // event type. No line-folding at 75 octets (fine for our short summaries/descriptions — a real
 // production version handling long text should fold long lines per the spec).
@@ -966,6 +973,7 @@ async Task SendBookingConfirmationEmailAsync(
     var startLocal = TimeZoneInfo.ConvertTimeFromUtc(startUtc, venueTimeZone);
     var whenText = startLocal.ToString("dddd d MMMM, h:mm tt");
     var servicesText = string.Join(", ", serviceNames);
+    var durationText = FormatDuration((int)(endUtc - startUtc).TotalMinutes);
     // Hardcode "$" rather than ToString("C") — that formats using CurrentCulture, and the droplet's
     // Linux container has no culture data configured, so CurrentCulture falls back to invariant,
     // whose currency symbol is "¤" (the generic placeholder), not "$". Matches booking.js's fmtMoney.
@@ -990,12 +998,13 @@ async Task SendBookingConfirmationEmailAsync(
 
     await SendResendEmailAsync(apiKey, fromEmail, fromName, toEmail,
         subject: "Your booking is confirmed",
-        text: $"Hi {customerName},\n\nYour booking is confirmed:\n\n{servicesText}\nWith {staffName}\n{whenText}\nTotal: {priceText}\n\nNeed to change or cancel? {manageUrl}\n\nSee you then!",
+        text: $"Hi {customerName},\n\nYour booking is confirmed:\n\n{servicesText}\nTime needed: {durationText}\nWith {staffName}\n{whenText}\nTotal: {priceText}\n\nNeed to change or cancel? {manageUrl}\n\nSee you then!",
         html: $@"
             <p>Hi {customerName},</p>
             <p>Your booking is confirmed:</p>
             <table style=""margin:16px 0;font-size:15px;"">
                 <tr><td style=""color:#888;padding-right:12px;"">Service</td><td>{servicesText}</td></tr>
+                <tr><td style=""color:#888;padding-right:12px;"">Time needed</td><td>{durationText}</td></tr>
                 <tr><td style=""color:#888;padding-right:12px;"">With</td><td>{staffName}</td></tr>
                 <tr><td style=""color:#888;padding-right:12px;"">When</td><td>{whenText}</td></tr>
                 <tr><td style=""color:#888;padding-right:12px;"">Total</td><td>{priceText}</td></tr>
@@ -1018,6 +1027,7 @@ async Task SendBookingRescheduledEmailAsync(
     var startLocal = TimeZoneInfo.ConvertTimeFromUtc(newStartUtc, venueTimeZone);
     var whenText = startLocal.ToString("dddd d MMMM, h:mm tt");
     var servicesText = string.Join(", ", serviceNames);
+    var durationText = FormatDuration((int)(newEndUtc - newStartUtc).TotalMinutes);
     var manageUrl = $"{baseUrl}/manage-booking.html?token={manageToken}";
 
     if (string.IsNullOrWhiteSpace(apiKey) || apiKey.StartsWith("YOUR_"))
@@ -1041,12 +1051,13 @@ async Task SendBookingRescheduledEmailAsync(
 
     await SendResendEmailAsync(apiKey, fromEmail, fromName, toEmail,
         subject: "Your booking has been rescheduled",
-        text: $"Hi {customerName},\n\nYour booking has been rescheduled:\n\n{servicesText}\nWith {staffName}\nNew time: {whenText}\n\nNeed to change again? {manageUrl}\n\nSee you then!",
+        text: $"Hi {customerName},\n\nYour booking has been rescheduled:\n\n{servicesText}\nTime needed: {durationText}\nWith {staffName}\nNew time: {whenText}\n\nNeed to change again? {manageUrl}\n\nSee you then!",
         html: $@"
             <p>Hi {customerName},</p>
             <p>Your booking has been rescheduled:</p>
             <table style=""margin:16px 0;font-size:15px;"">
                 <tr><td style=""color:#888;padding-right:12px;"">Service</td><td>{servicesText}</td></tr>
+                <tr><td style=""color:#888;padding-right:12px;"">Time needed</td><td>{durationText}</td></tr>
                 <tr><td style=""color:#888;padding-right:12px;"">With</td><td>{staffName}</td></tr>
                 <tr><td style=""color:#888;padding-right:12px;"">New time</td><td>{whenText}</td></tr>
             </table>
