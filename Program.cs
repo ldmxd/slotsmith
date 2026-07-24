@@ -956,7 +956,10 @@ async Task SendBookingConfirmationEmailAsync(
     var startLocal = TimeZoneInfo.ConvertTimeFromUtc(startUtc, venueTimeZone);
     var whenText = startLocal.ToString("dddd d MMMM, h:mm tt");
     var servicesText = string.Join(", ", serviceNames);
-    var priceText = (totalPriceCents / 100m).ToString("C");
+    // Hardcode "$" rather than ToString("C") — that formats using CurrentCulture, and the droplet's
+    // Linux container has no culture data configured, so CurrentCulture falls back to invariant,
+    // whose currency symbol is "¤" (the generic placeholder), not "$". Matches booking.js's fmtMoney.
+    var priceText = "$" + (totalPriceCents / 100m).ToString("0.00");
     var manageUrl = $"{baseUrl}/manage-booking.html?token={manageToken}";
 
     if (string.IsNullOrWhiteSpace(apiKey) || apiKey.StartsWith("YOUR_"))
