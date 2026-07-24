@@ -48,6 +48,13 @@ function money(cents) {
   return (cents / 100).toLocaleString('en-AU', { style: 'currency', currency: 'AUD' });
 }
 
+// Same "1h 30m" / "45 mins" format as the confirmation screen's "Time needed" row (booking.js).
+function fmtDuration(totalMinutes) {
+  return totalMinutes >= 60
+    ? `${Math.floor(totalMinutes / 60)}h${totalMinutes % 60 ? ' ' + (totalMinutes % 60) + 'm' : ''}`
+    : `${totalMinutes} mins`;
+}
+
 let booking = null;
 let rescheduleDate = toLocalDateInputValue(new Date().toISOString());
 let rescheduleDateInitialized = false;
@@ -104,6 +111,7 @@ function render() {
   content.innerHTML = `
     <div style="margin:0 20px;">
       <div class="field-row"><span class="label">Service</span><span class="value">${booking.serviceNames.join(', ')}</span></div>
+      <div class="field-row"><span class="label">Time needed</span><span class="value">${fmtDuration(booking.totalDurationMinutes)}</span></div>
       <div class="field-row"><span class="label">With</span><span class="value">${booking.staffName}</span></div>
       <div class="field-row"><span class="label">When</span><span class="value">${fmtDate(booking.startUtc)}</span></div>
       <div class="field-row"><span class="label">Total</span><span class="value">${money(booking.totalPriceCents)}</span></div>

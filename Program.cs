@@ -396,7 +396,17 @@ app.MapPost("/api/bookings/manage/{token}/reschedule", async (string token, Resc
             conn = await provider.RefreshTokenAsync(conn);
             await repo.UpsertCalendarConnectionAsync(conn);
         }
-        busyForValidation.AddRange(await provider.GetBusyTimesAsync(conn, dayStartUtc, dayEndUtc));
+        var calendarBusyForValidation = await provider.GetBusyTimesAsync(conn, dayStartUtc, dayEndUtc);
+
+        // Same fix as /api/availability's exclusion filter below (search ExcludeBookingToken): the
+        // booking being rescheduled still has its own event sitting in the staff member's calendar
+        // at this point — the old event isn't cancelled until after validation passes, further down
+        // this handler — so without dropping it here, re-picking a time that overlaps the booking's
+        // *current* slot (e.g. nudging it by 15 minutes) always fails validation against itself.
+        calendarBusyForValidation = calendarBusyForValidation
+            .Where(b => !(b.StartUtc == booking.StartUtc && b.EndUtc == booking.EndUtc))
+            .ToList();
+        busyForValidation.AddRange(calendarBusyForValidation);
     }
 
     var validSlots = AvailabilityEngine.ComputeSlots(
