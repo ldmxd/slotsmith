@@ -502,7 +502,8 @@ app.MapPost("/api/bookings/manage/{token}/cancel", async (string token, BookingR
             var serviceNames = items.Select(i => allServices.FirstOrDefault(s => s.ServiceId == i.ServiceId)?.Name ?? "Service").ToList();
 
             await SendBookingCancelledEmailAsync(
-                builder.Configuration, customer.Email, customer.Name, staffName, serviceNames, booking.StartUtc, venueTimeZone);
+                builder.Configuration, customer.Email, customer.Name, staffName, serviceNames,
+                booking.StartUtc, booking.EndUtc, venueTimeZone, booking.ManageToken);
         }
         catch (Exception ex)
         {
@@ -1108,7 +1109,7 @@ async Task SendTimeOffRescheduleNeededEmailAsync(
 
 async Task SendBookingCancelledEmailAsync(
     IConfiguration config, string toEmail, string customerName, string staffName,
-    List<string> serviceNames, DateTime startUtc, TimeZoneInfo venueTimeZone)
+    List<string> serviceNames, DateTime startUtc, DateTime endUtc, TimeZoneInfo venueTimeZone, string manageToken)
 {
     var apiKey    = config["Resend:ApiKey"];
     var fromEmail = config["Resend:FromEmail"] ?? "noreply@mihoknows.com.au";
@@ -1126,6 +1127,21 @@ async Task SendBookingCancelledEmailAsync(
         return;
     }
 
+    // Same UID as the original confirmation/reschedule .ics, but METHOD:CANCEL + STATUS:CANCELLED —
+    // without this, a calendar app that already added the event from the confirmation email has no
+    // way to know the appointment went away, so it just keeps showing the old "confirmed" event.
+    // Fixed SEQUENCE:2 rather than a real per-booking counter (same known simplification as the
+    // reschedule email's fixed SEQUENCE:1) — good enough for a demo, but a booking rescheduled more
+    // than once before being cancelled could end up with a SEQUENCE that isn't actually the highest,
+    // and some calendar apps ignore cancellations with a stale sequence number.
+    var ics = BuildIcsContent(
+        uid: $"{manageToken}@slotsmith",
+        startUtc: startUtc, endUtc: endUtc,
+        summary: $"{servicesText}",
+        description: $"Cancelled. With {staffName}.",
+        sequence: 2, method: "CANCEL", status: "CANCELLED");
+    var icsAttachment = ("appointment.ics", Convert.ToBase64String(Encoding.UTF8.GetBytes(ics)));
+
     await SendResendEmailAsync(apiKey, fromEmail, fromName, toEmail,
         subject: "Your booking has been cancelled",
         text: $"Hi {customerName},\n\nYour booking has been cancelled:\n\n{servicesText}\nWith {staffName}\n{whenText}\n\nChanged your mind? Book again: {bookingUrl}",
@@ -1137,7 +1153,8 @@ async Task SendBookingCancelledEmailAsync(
                 <tr><td style=""color:#888;padding-right:12px;"">With</td><td>{staffName}</td></tr>
                 <tr><td style=""color:#888;padding-right:12px;"">Was</td><td>{whenText}</td></tr>
             </table>
-            <p><a href=""{bookingUrl}"" style=""color:#0a58ca;"">Book a new appointment</a></p>");
+            <p><a href=""{bookingUrl}"" style=""color:#0a58ca;"">Book a new appointment</a></p>",
+        attachment: icsAttachment);
 }
 
 async Task SendResendEmailAsync(string apiKey, string fromEmail, string fromName,
