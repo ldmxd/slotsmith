@@ -188,25 +188,40 @@ app.MapPost("/api/availability", async (AvailabilityRequest req, BookingReposito
             var connection = await repo.GetCalendarConnectionAsync(staffId, providerKey);
             if (connection is null) continue;
 
-            var provider = calendarFactory.Get(providerKey);
-            if (connection.TokenExpiresUtc < DateTime.UtcNow.AddMinutes(2))
+            try
             {
-                connection = await provider.RefreshTokenAsync(connection);
-                await repo.UpsertCalendarConnectionAsync(connection);
-            }
-            var calendarBusy = await provider.GetBusyTimesAsync(connection, dayStartUtc, dayEndUtc);
+                var provider = calendarFactory.Get(providerKey);
+                if (connection.TokenExpiresUtc < DateTime.UtcNow.AddMinutes(2))
+                {
+                    connection = await provider.RefreshTokenAsync(connection);
+                    await repo.UpsertCalendarConnectionAsync(connection);
+                }
+                var calendarBusy = await provider.GetBusyTimesAsync(connection, dayStartUtc, dayEndUtc);
 
-            // freeBusy responses are plain time ranges with no event id, so we can't exclude "this
-            // booking's event" by identity — instead drop any interval that exactly matches the
-            // booking being rescheduled. Good enough in a booking-system-managed calendar; a
-            // coincidental external event at the identical minute is vanishingly unlikely.
-            if (excludeBookingId is not null && excludeBooking is not null)
-            {
-                calendarBusy = calendarBusy
-                    .Where(b => !(b.StartUtc == excludeBooking.StartUtc && b.EndUtc == excludeBooking.EndUtc))
-                    .ToList();
+                // freeBusy responses are plain time ranges with no event id, so we can't exclude "this
+                // booking's event" by identity — instead drop any interval that exactly matches the
+                // booking being rescheduled. Good enough in a booking-system-managed calendar; a
+                // coincidental external event at the identical minute is vanishingly unlikely.
+                if (excludeBookingId is not null && excludeBooking is not null)
+                {
+                    calendarBusy = calendarBusy
+                        .Where(b => !(b.StartUtc == excludeBooking.StartUtc && b.EndUtc == excludeBooking.EndUtc))
+                        .ToList();
+                }
+                busy.AddRange(calendarBusy);
             }
-            busy.AddRange(calendarBusy);
+            catch (Exception ex)
+            {
+                // A broken/expired calendar connection for one staff member (e.g. a Google refresh
+                // token that's expired, or an undecryptable token left over from a Data Protection
+                // key change) used to throw here and 500 the whole /api/availability call — which
+                // blocked booking that staff member entirely, and blocked "no preference" too since
+                // it loops over every eligible staff member. Log and fall back to "no calendar busy
+                // data for this staff member" instead, so a booking can still go ahead; worst case
+                // it double-books against something only visible in their external calendar, same
+                // risk as before calendar linking existed at all.
+                Console.WriteLine($"[Calendar] Skipping {providerKey} busy lookup for staff {staffId}: {ex.Message}");
+            }
         }
 
         var slots = AvailabilityEngine.ComputeSlots(
@@ -390,23 +405,33 @@ app.MapPost("/api/bookings/manage/{token}/reschedule", async (string token, Resc
     {
         var conn = await repo.GetCalendarConnectionAsync(booking.StaffId, providerKey);
         if (conn is null) continue;
-        var provider = calendarFactory.Get(providerKey);
-        if (conn.TokenExpiresUtc < DateTime.UtcNow.AddMinutes(2))
-        {
-            conn = await provider.RefreshTokenAsync(conn);
-            await repo.UpsertCalendarConnectionAsync(conn);
-        }
-        var calendarBusyForValidation = await provider.GetBusyTimesAsync(conn, dayStartUtc, dayEndUtc);
 
-        // Same fix as /api/availability's exclusion filter below (search ExcludeBookingToken): the
-        // booking being rescheduled still has its own event sitting in the staff member's calendar
-        // at this point — the old event isn't cancelled until after validation passes, further down
-        // this handler — so without dropping it here, re-picking a time that overlaps the booking's
-        // *current* slot (e.g. nudging it by 15 minutes) always fails validation against itself.
-        calendarBusyForValidation = calendarBusyForValidation
-            .Where(b => !(b.StartUtc == booking.StartUtc && b.EndUtc == booking.EndUtc))
-            .ToList();
-        busyForValidation.AddRange(calendarBusyForValidation);
+        try
+        {
+            var provider = calendarFactory.Get(providerKey);
+            if (conn.TokenExpiresUtc < DateTime.UtcNow.AddMinutes(2))
+            {
+                conn = await provider.RefreshTokenAsync(conn);
+                await repo.UpsertCalendarConnectionAsync(conn);
+            }
+            var calendarBusyForValidation = await provider.GetBusyTimesAsync(conn, dayStartUtc, dayEndUtc);
+
+            // Same fix as /api/availability's exclusion filter below (search ExcludeBookingToken): the
+            // booking being rescheduled still has its own event sitting in the staff member's calendar
+            // at this point — the old event isn't cancelled until after validation passes, further down
+            // this handler — so without dropping it here, re-picking a time that overlaps the booking's
+            // *current* slot (e.g. nudging it by 15 minutes) always fails validation against itself.
+            calendarBusyForValidation = calendarBusyForValidation
+                .Where(b => !(b.StartUtc == booking.StartUtc && b.EndUtc == booking.EndUtc))
+                .ToList();
+            busyForValidation.AddRange(calendarBusyForValidation);
+        }
+        catch (Exception ex)
+        {
+            // Same graceful-degrade as /api/availability — a broken calendar connection shouldn't
+            // block rescheduling entirely. See the comment there for the full reasoning.
+            Console.WriteLine($"[Calendar] Skipping {providerKey} busy lookup during reschedule validation for staff {booking.StaffId}: {ex.Message}");
+        }
     }
 
     var validSlots = AvailabilityEngine.ComputeSlots(
