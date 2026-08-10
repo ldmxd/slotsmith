@@ -560,6 +560,36 @@ app.MapGet("/api/admin/bookings/upcoming", async (BookingRepository repo) =>
     return Results.Ok(results);
 }).RequireAuthorization();
 
+// Day-view calendar (bookings-admin.html) — every confirmed booking for one venue-local day,
+// across all staff, so it can be laid out as a column-per-professional day sheet.
+app.MapGet("/api/admin/bookings/day", async (string date, BookingRepository repo) =>
+{
+    if (!DateOnly.TryParse(date, out var localDate))
+        return Results.BadRequest("Invalid date.");
+
+    var dayStartUtc = TimeZoneInfo.ConvertTimeToUtc(localDate.ToDateTime(TimeOnly.MinValue), venueTimeZone);
+    var dayEndUtc = dayStartUtc.AddDays(1);
+
+    var results = await repo.GetBookingsForDayAsync(dayStartUtc, dayEndUtc);
+    return Results.Ok(results);
+}).RequireAuthorization();
+
+// Business hours for one venue-local day — lets the day-view calendar size its time axis to
+// actual opening hours instead of a guessed range, and show "Closed" when appropriate.
+app.MapGet("/api/admin/business-hours", async (string date, BookingRepository repo) =>
+{
+    if (!DateOnly.TryParse(date, out var localDate))
+        return Results.BadRequest("Invalid date.");
+
+    var dayOfWeek = (byte)(int)localDate.DayOfWeek;
+    var hours = await repo.GetBusinessHoursAsync(dayOfWeek);
+    return Results.Ok(new
+    {
+        Open = hours?.OpenTime is { } open ? open.ToString(@"hh\:mm") : null,
+        Close = hours?.CloseTime is { } close ? close.ToString(@"hh\:mm") : null,
+    });
+}).RequireAuthorization();
+
 // ── Service admin (Angelo editing prices / durations) ──────────────────────
 // No auth on this yet — same known simplification as admin.html's calendar linking.
 // Fine for a demo on an unlisted URL; flagged in README as something to lock down

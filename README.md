@@ -281,6 +281,16 @@ flow a customer would, on the customer's behalf. Search matching is a plain `LIK
 containing `%` or `_` behaves like a SQL wildcard rather than a literal character — a cosmetic
 edge case, not worth escaping for a demo.
 
+`bookings-admin.html` also has a Calendar tab: a day-view sheet with one column per professional
+(or filtered to a single one) and that day's confirmed bookings positioned as time blocks, sized
+to the day's actual business hours (`GET /api/admin/business-hours?date=...`) and populated from
+`GET /api/admin/bookings/day?date=...`. Clicking a block opens the same `manage-booking.html?token=...`
+flow as the list view. Block positioning assumes the staff member's browser clock is set to Sydney
+local time (same assumption the booking flow's slot buttons already make) — it reads `Date.getHours()`
+directly rather than forcing a timezone conversion. A booking that starts or ends outside the day's
+business hours (e.g. hours changed after the booking was made) is clamped to the visible window
+rather than resized off-grid.
+
 ### Price change history + the once-a-year CPI rise
 
 Every price change — a single manual edit or a bulk CPI rise — gets logged to

@@ -26,6 +26,38 @@
   }
   .status-tag.confirmed { background: var(--success-bg); color: var(--success); }
   .status-tag.cancelled { background: var(--danger-bg); color: var(--danger); }
+
+  .tab-row { display: flex; gap: 8px; margin: 16px 20px 0; }
+
+  /* ── Day-view calendar ─────────────────────────────────────────────── */
+  .cal-controls { display: flex; align-items: center; gap: 10px; margin: 16px 20px; flex-wrap: wrap; }
+  .cal-controls input[type=date], .cal-controls select {
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-family: inherit; font-size: 0.9rem;
+  }
+  .cal-nav-btn {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: #fff;
+    cursor: pointer; font-size: 1.1rem; line-height: 1;
+  }
+  .cal-nav-btn:hover { background: var(--panel); }
+  .cal-grid-wrap { margin: 8px 20px 30px; overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+  .cal-grid { display: flex; min-width: 600px; }
+  .cal-time-col { flex: 0 0 56px; border-right: 1px solid var(--border); position: relative; }
+  .cal-time-label { position: absolute; right: 8px; transform: translateY(-50%); font-size: 0.72rem; color: var(--muted); }
+  .cal-staff-col { flex: 1; min-width: 170px; border-right: 1px solid var(--border); position: relative; }
+  .cal-staff-col:last-child { border-right: none; }
+  .cal-staff-header {
+    padding: 10px; font-weight: 700; font-size: 0.9rem; text-align: center;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  .cal-hour-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); }
+  .cal-booking-block {
+    position: absolute; left: 4px; right: 4px; border-radius: 8px; background: #f4f2fc;
+    border: 1px solid var(--accent); padding: 4px 6px; font-size: 0.72rem; overflow: hidden;
+    cursor: pointer; box-shadow: var(--shadow-sm); line-height: 1.3;
+  }
+  .cal-booking-block:hover { box-shadow: var(--shadow-md); }
+  .cal-booking-block .cb-time { font-weight: 700; }
+  .cal-booking-block .cb-name { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -40,12 +72,33 @@
   </p>
   <div id="banner"></div>
 
-  <div class="search-row">
-    <input id="searchInput" placeholder="Search by name, email, or phone…" autofocus>
-    <button class="pill-btn primary" id="searchBtn">Search</button>
+  <div class="tab-row">
+    <button class="pill-btn primary" id="tabListBtn">List</button>
+    <button class="pill-btn" id="tabCalendarBtn">Calendar</button>
   </div>
 
-  <div id="results"></div>
+  <div id="listView">
+    <div class="search-row">
+      <input id="searchInput" placeholder="Search by name, email, or phone…" autofocus>
+      <button class="pill-btn primary" id="searchBtn">Search</button>
+    </div>
+
+    <div id="results"></div>
+  </div>
+
+  <div id="calendarView" style="display:none;">
+    <div class="cal-controls">
+      <button class="cal-nav-btn" id="calPrevBtn" aria-label="Previous day">&lsaquo;</button>
+      <input type="date" id="calDateInput">
+      <button class="cal-nav-btn" id="calNextBtn" aria-label="Next day">&rsaquo;</button>
+      <button class="pill-btn" id="calTodayBtn">Today</button>
+      <select id="calStaffFilter">
+        <option value="all">All professionals</option>
+      </select>
+    </div>
+    <div id="calStatus" style="margin:0 20px 8px;color:var(--muted);font-size:0.85rem;"></div>
+    <div class="cal-grid-wrap"><div id="calGrid" class="cal-grid"></div></div>
+  </div>
 </main>
 <script src="admin-nav.js"></script>
 <script>
@@ -189,6 +242,180 @@ document.getElementById('searchBtn').onclick = runSearch;
 document.getElementById('searchInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') runSearch();
 });
+
+// ── Tabs ─────────────────────────────────────────────────────────────────
+
+const tabListBtn = document.getElementById('tabListBtn');
+const tabCalendarBtn = document.getElementById('tabCalendarBtn');
+const listView = document.getElementById('listView');
+const calendarView = document.getElementById('calendarView');
+
+function showTab(tab) {
+  const isList = tab === 'list';
+  listView.style.display = isList ? '' : 'none';
+  calendarView.style.display = isList ? 'none' : '';
+  tabListBtn.className = 'pill-btn' + (isList ? ' primary' : '');
+  tabCalendarBtn.className = 'pill-btn' + (isList ? '' : ' primary');
+  if (!isList) loadCalendarDay();
+}
+tabListBtn.onclick = () => showTab('list');
+tabCalendarBtn.onclick = () => showTab('calendar');
+
+// ── Calendar (day view): staff as columns, bookings positioned by time ────
+// A day sheet rather than another list — lets front-desk staff see at a glance who's free when,
+// across everyone or filtered to one professional.
+
+let calStaff = [];
+let calDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
+async function loadCalStaffOnce() {
+  if (calStaff.length) return;
+  calStaff = await api('/api/staff');
+  const select = document.getElementById('calStaffFilter');
+  for (const s of calStaff) {
+    const opt = document.createElement('option');
+    opt.value = s.staffId ?? s.StaffId;
+    opt.textContent = s.displayName ?? s.DisplayName;
+    select.appendChild(opt);
+  }
+}
+
+function fmtHourLabel(minutesFromMidnight) {
+  const h = Math.floor(minutesFromMidnight / 60);
+  const ampm = h < 12 ? 'am' : 'pm';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}${ampm}`;
+}
+
+const CAL_PX_PER_MIN = 1.2;
+const CAL_HEADER_HEIGHT = 44;
+
+async function loadCalendarDay() {
+  await loadCalStaffOnce();
+  document.getElementById('calDateInput').value = calDate;
+
+  const grid = document.getElementById('calGrid');
+  const status = document.getElementById('calStatus');
+  grid.innerHTML = '';
+  status.textContent = 'Loading…';
+
+  let hours, bookings;
+  try {
+    [hours, bookings] = await Promise.all([
+      api(`/api/admin/business-hours?date=${calDate}`),
+      api(`/api/admin/bookings/day?date=${calDate}`),
+    ]);
+  } catch (err) {
+    status.textContent = `Couldn't load: ${err.message}`;
+    return;
+  }
+
+  const openStr = hours.open ?? hours.Open;
+  const closeStr = hours.close ?? hours.Close;
+  if (!openStr || !closeStr) {
+    status.textContent = 'Closed this day.';
+    return;
+  }
+  status.textContent = '';
+
+  const [openH, openM] = openStr.split(':').map(Number);
+  const [closeH, closeM] = closeStr.split(':').map(Number);
+  const openMinutes = openH * 60 + openM;
+  const closeMinutes = closeH * 60 + closeM;
+  const gridHeight = (closeMinutes - openMinutes) * CAL_PX_PER_MIN;
+  const colHeight = gridHeight + CAL_HEADER_HEIGHT;
+
+  const staffFilterId = document.getElementById('calStaffFilter').value;
+  const staffToShow = staffFilterId === 'all'
+    ? calStaff
+    : calStaff.filter(s => String(s.staffId ?? s.StaffId) === staffFilterId);
+
+  if (staffToShow.length === 0) {
+    status.textContent = 'No professionals to show.';
+    return;
+  }
+
+  const timeCol = document.createElement('div');
+  timeCol.className = 'cal-time-col';
+  timeCol.style.height = `${colHeight}px`;
+  timeCol.innerHTML = '<div class="cal-staff-header" style="visibility:hidden;">&nbsp;</div>';
+  for (let m = openMinutes; m <= closeMinutes; m += 60) {
+    const label = document.createElement('div');
+    label.className = 'cal-time-label';
+    label.style.top = `${CAL_HEADER_HEIGHT + (m - openMinutes) * CAL_PX_PER_MIN}px`;
+    label.textContent = fmtHourLabel(m);
+    timeCol.appendChild(label);
+  }
+  grid.appendChild(timeCol);
+
+  for (const s of staffToShow) {
+    const id = s.staffId ?? s.StaffId;
+    const name = s.displayName ?? s.DisplayName;
+
+    const col = document.createElement('div');
+    col.className = 'cal-staff-col';
+    col.style.height = `${colHeight}px`;
+
+    const header = document.createElement('div');
+    header.className = 'cal-staff-header';
+    header.textContent = name;
+    col.appendChild(header);
+
+    for (let m = openMinutes; m <= closeMinutes; m += 60) {
+      const line = document.createElement('div');
+      line.className = 'cal-hour-line';
+      line.style.top = `${CAL_HEADER_HEIGHT + (m - openMinutes) * CAL_PX_PER_MIN}px`;
+      col.appendChild(line);
+    }
+
+    const staffBookings = bookings.filter(b => (b.staffId ?? b.StaffId) === id);
+    for (const b of staffBookings) {
+      // Relies on the browser's own clock being set to Sydney local time (true for staff actually
+      // in the salon) — same assumption booking.js's slot buttons already make elsewhere.
+      const start = new Date(b.startUtc ?? b.StartUtc);
+      const end = new Date(b.endUtc ?? b.EndUtc);
+      const startMin = start.getHours() * 60 + start.getMinutes();
+      const endMin = end.getHours() * 60 + end.getMinutes();
+      // Clamp to the visible business-hours window — a booking that somehow starts/ends outside
+      // it (e.g. hours changed after the booking was made) just gets cut off at the edge rather
+      // than pushing the grid layout around.
+      const top = CAL_HEADER_HEIGHT + Math.max(0, startMin - openMinutes) * CAL_PX_PER_MIN;
+      const height = Math.max(18, (Math.min(endMin, closeMinutes) - Math.max(startMin, openMinutes)) * CAL_PX_PER_MIN);
+
+      const block = document.createElement('div');
+      block.className = 'cal-booking-block';
+      block.style.top = `${top}px`;
+      block.style.height = `${height}px`;
+      const timeLabel = start.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' });
+      block.innerHTML = `
+        <div class="cb-time">${timeLabel}</div>
+        <div class="cb-name">${b.customerName ?? b.CustomerName}</div>
+        <div>${b.serviceNames ?? b.ServiceNames}</div>
+      `;
+      block.title = 'Open this booking';
+      block.onclick = () => window.open(`/manage-booking.html?token=${b.manageToken ?? b.ManageToken}`, '_blank');
+      col.appendChild(block);
+    }
+
+    grid.appendChild(col);
+  }
+}
+
+function shiftCalDate(deltaDays) {
+  const d = new Date(calDate + 'T00:00:00');
+  d.setDate(d.getDate() + deltaDays);
+  calDate = d.toLocaleDateString('en-CA');
+  loadCalendarDay();
+}
+
+document.getElementById('calPrevBtn').onclick = () => shiftCalDate(-1);
+document.getElementById('calNextBtn').onclick = () => shiftCalDate(1);
+document.getElementById('calTodayBtn').onclick = () => {
+  calDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+  loadCalendarDay();
+};
+document.getElementById('calDateInput').onchange = (e) => { calDate = e.target.value; loadCalendarDay(); };
+document.getElementById('calStaffFilter').onchange = () => loadCalendarDay();
 
 loadUpcoming();
 </script>

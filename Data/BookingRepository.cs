@@ -438,6 +438,23 @@ public class BookingRepository
         return FixKinds(rows);
     }
 
+    /// <summary>All confirmed bookings across every staff member that overlap the given UTC range —
+    /// backs the day-view calendar on bookings-admin.html. Ordered by staff then start time so the
+    /// front end can group rows into columns without re-sorting.</summary>
+    public async Task<IEnumerable<BookingSearchRow>> GetBookingsForDayAsync(DateTime dayStartUtc, DateTime dayEndUtc)
+    {
+        using var conn = Open();
+        var rows = await conn.QueryAsync<BookingSearchRow>(
+            $@"SELECT {BookingSearchColumns}
+            {BookingSearchFromJoins}
+            WHERE b.Status = 'Confirmed' AND b.StartUtc < @dayEndUtc AND b.EndUtc > @dayStartUtc
+            {BookingSearchGroupBy}
+            ORDER BY b.StaffId, b.StartUtc ASC",
+            new { dayStartUtc, dayEndUtc });
+
+        return FixKinds(rows);
+    }
+
     // ── Manage-my-booking (token-based, no login) ───────────────────────────
 
     public async Task<Booking?> GetBookingByTokenAsync(string manageToken)
