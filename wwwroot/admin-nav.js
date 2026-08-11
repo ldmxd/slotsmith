@@ -1,13 +1,13 @@
-// Shared nav + logout for the admin pages (bookings-admin.html, admin.html,
-// services-admin.html, staff-admin.html) — one place to keep the link list and logout behaviour
-// in sync instead of duplicating both across every page. Injects into <div id="adminNav"></div>
-// in the topbar.
+// Shared nav + logout for the admin pages (bookings-admin.html, services-admin.html,
+// staff-admin.html) — one place to keep the link list and logout behaviour in sync instead of
+// duplicating both across every page. Injects into <div id="adminNav"></div> in the topbar.
+// Calendar connection used to be its own page (admin.html) — folded into staff-admin.html
+// since it's per-stylist data, same as services and time off. admin.html now just redirects.
 (function () {
   const pages = [
     { href: '/bookings-admin.html', label: 'Bookings' },
     { href: '/staff-admin.html', label: 'Staff' },
     { href: '/services-admin.html', label: 'Prices' },
-    { href: '/admin.html', label: 'Calendars' },
   ];
 
   const target = document.getElementById('adminNav');

@@ -27,6 +27,25 @@
   .timeoff-add label { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
   .timeoff-add input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font: inherit; width: 100%; }
   .timeoff-add .reason-field { grid-column: 1 / -1; }
+
+  /* ── Staff selector row ────────────────────────────────────────────── */
+  .staff-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 20px 4px; }
+  .staff-tab {
+    display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; border-radius: 999px;
+    border: 1px solid var(--border); background: #fff; cursor: pointer; font-weight: 600;
+    font-size: 0.9rem; color: var(--ink); transition: border-color .15s ease, background .15s ease;
+  }
+  .staff-tab:hover { border-color: #d8d3cb; }
+  .staff-tab .avatar { width: 26px; height: 26px; font-size: 0.7rem; }
+  .staff-tab.selected { border-color: var(--accent); background: #f4f2fc; }
+  .staff-tab.inactive { opacity: 0.55; }
+  .staff-tab.add-new { border-style: dashed; color: var(--muted); }
+  .staff-tab.add-new:hover { border-color: var(--accent); color: var(--accent); }
+  .staff-tab.add-new.selected { border-style: solid; }
+
+  /* ── Calendar connection (folded in from the old admin.html) ─────────── */
+  .provider-row { display: flex; gap: 10px; margin-top: 10px; }
+  .status-ok { color: #1a7a3c; font-size: 0.85rem; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -40,27 +59,9 @@
   </p>
   <div id="banner"></div>
 
-  <h2 class="section-title">Add a stylist</h2>
-  <div class="card" style="flex-direction:column;align-items:stretch;">
-    <div class="field-inline">
-      <label for="new-name">Name</label>
-      <input id="new-name" placeholder="Full name">
-    </div>
-    <div class="field-inline">
-      <label for="new-email">Email</label>
-      <input id="new-email" type="email" placeholder="optional">
-    </div>
-    <div class="field-inline">
-      <label for="new-bio">Bio</label>
-      <textarea id="new-bio" rows="2" placeholder="optional"></textarea>
-    </div>
-    <div class="actions" style="margin-left:0;padding-left:0;">
-      <button class="pill-btn primary" id="addStaffBtn">Add stylist</button>
-    </div>
-  </div>
-
-  <h2 class="section-title">Existing staff</h2>
-  <div id="staffList"></div>
+  <h2 class="section-title">Stylists</h2>
+  <div id="staffTabs" class="staff-tabs"></div>
+  <div id="staffDetail"></div>
 </main>
 <script src="admin-nav.js"></script>
 <script>
@@ -89,147 +90,360 @@ async function loadCatalogue() {
   allServices = cats.flatMap(c => c.services.map(s => ({ ...s, categoryId: c.categoryId })));
 }
 
+// Module state: the full staff list, and which one the detail pane below the tab row is
+// currently showing. selectedStaffId === 'new' means "show the add-stylist form instead".
+let staff = [];
+let selectedStaffId = null;
+// Set from ?staffId=... when landing back from a Google/Microsoft OAuth redirect — see init()
+// below and the toggle wiring in renderStaffDetail() where it's consumed.
+let autoOpenCalendarForStaffId = null;
+
 async function loadStaff() {
-  const staff = await api('/api/admin/staff');
-  const list = document.getElementById('staffList');
-  list.innerHTML = '';
+  staff = await api('/api/admin/staff');
+
+  // First load: default to the first active stylist rather than an empty pane, so there's
+  // something useful on screen immediately. Once a selection exists, keep it across reloads
+  // (e.g. after saving) unless that stylist no longer exists.
+  if (selectedStaffId === null) {
+    const firstActive = staff.find(s => s.isActive);
+    selectedStaffId = firstActive ? firstActive.staffId : (staff[0]?.staffId ?? 'new');
+  } else if (selectedStaffId !== 'new' && !staff.some(s => s.staffId === selectedStaffId)) {
+    selectedStaffId = staff[0]?.staffId ?? 'new';
+  }
+
+  renderTabs();
+  renderStaffDetail();
+}
+
+function renderTabs() {
+  const tabs = document.getElementById('staffTabs');
+  tabs.innerHTML = '';
 
   for (const s of staff) {
-    const card = document.createElement('div');
-    card.className = 'card staff-card' + (s.isActive ? '' : ' inactive');
-
     const initials = (s.displayName || '?').slice(0, 2).toUpperCase();
     const avatarInner = s.photoUrl
       ? `<img src="${s.photoUrl}" alt="${s.displayName}" onerror="this.outerHTML='${initials}'">`
       : initials;
 
-    card.innerHTML = `
-      <div class="row1">
-        <div class="avatar">${avatarInner}</div>
-        <div class="grow">
-          <div class="card-title">${s.displayName}</div>
-          <div class="card-sub">${s.email || 'No email on file'}</div>
-        </div>
-        <span class="badge ${s.isActive ? 'active' : ''}">${s.isActive ? 'Active' : 'Inactive'}</span>
-      </div>
-      <div class="field-inline"><label>Name</label><input class="f-name" value="${s.displayName}"></div>
-      <div class="field-inline"><label>Email</label><input class="f-email" type="email" value="${s.email || ''}"></div>
-      <div class="field-inline"><label>Bio</label><textarea class="f-bio" rows="2">${s.bio || ''}</textarea></div>
-      <div class="field-inline">
-        <label>Photo</label>
-        <div>
-          <input type="file" class="f-photo" accept="image/jpeg,image/png,image/webp">
-          ${s.photoUrl ? '<button type="button" class="pill-btn remove-photo-btn" style="margin-left:8px;padding:4px 12px;font-size:0.8rem;">Remove photo</button>' : ''}
-        </div>
-      </div>
-      <div class="actions" style="margin-left:0;padding-left:0;">
-        <button class="pill-btn save-btn">Save details</button>
-        <button class="pill-btn toggle-btn" style="${s.isActive ? 'border-color:#a3241f;color:#a3241f;' : ''}">
-          ${s.isActive ? 'Deactivate' : 'Reactivate'}
-        </button>
-        <span class="row-note"></span>
-      </div>
-      <details class="admin-details">
-        <summary>Services this stylist offers</summary>
-        <div class="services-body"></div>
-      </details>
-      <details class="admin-details">
-        <summary>Time off</summary>
-        <div class="timeoff-body"></div>
-      </details>
-    `;
-
-    const note = card.querySelector('.row-note');
-
-    const photoInput = card.querySelector('.f-photo');
-    photoInput.onchange = async () => {
-      const file = photoInput.files[0];
-      if (!file) return;
-      note.textContent = 'Uploading photo…'; note.style.color = 'var(--muted)';
-      try {
-        const formData = new FormData();
-        formData.append('photo', file);
-        const r = await fetch(`/api/admin/staff/${s.staffId}/photo`, { method: 'POST', body: formData });
-        if (r.status === 401) {
-          location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname);
-          return;
-        }
-        if (!r.ok) throw new Error(await r.text());
-        note.textContent = 'Photo uploaded ✓'; note.style.color = '#1a7a3c';
-        await loadStaff();
-      } catch (err) {
-        note.textContent = 'Failed to upload photo: ' + err.message; note.style.color = '#a3241f';
-      }
-    };
-
-    const removePhotoBtn = card.querySelector('.remove-photo-btn');
-    if (removePhotoBtn) {
-      removePhotoBtn.onclick = async () => {
-        note.textContent = 'Removing…'; note.style.color = 'var(--muted)';
-        try {
-          await api(`/api/admin/staff/${s.staffId}/photo`, { method: 'DELETE' });
-          note.textContent = 'Photo removed ✓'; note.style.color = '#1a7a3c';
-          await loadStaff();
-        } catch (err) {
-          note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
-        }
-      };
-    }
-
-    card.querySelector('.save-btn').onclick = async () => {
-      const displayName = card.querySelector('.f-name').value.trim();
-      const email = card.querySelector('.f-email').value.trim() || null;
-      const bio = card.querySelector('.f-bio').value.trim() || null;
-      if (!displayName) { note.textContent = 'Name is required.'; note.style.color = '#a3241f'; return; }
-      note.textContent = 'Saving…'; note.style.color = 'var(--muted)';
-      try {
-        await api(`/api/admin/staff/${s.staffId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ displayName, email, bio, isActive: s.isActive }),
-        });
-        note.textContent = 'Saved ✓'; note.style.color = '#1a7a3c';
-      } catch (err) {
-        note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
-      }
-    };
-
-    card.querySelector('.toggle-btn').onclick = async () => {
-      const displayName = card.querySelector('.f-name').value.trim() || s.displayName;
-      const email = card.querySelector('.f-email').value.trim() || null;
-      const bio = card.querySelector('.f-bio').value.trim() || null;
-      try {
-        await api(`/api/admin/staff/${s.staffId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ displayName, email, bio, isActive: !s.isActive }),
-        });
-        await loadStaff();
-      } catch (err) {
-        note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
-      }
-    };
-
-    const servicesDetails = card.querySelector('.services-body').closest('details');
-    let servicesLoaded = false;
-    servicesDetails.addEventListener('toggle', async () => {
-      if (servicesDetails.open && !servicesLoaded) {
-        servicesLoaded = true;
-        await renderServiceCheckboxes(s.staffId, card.querySelector('.services-body'));
-      }
-    });
-
-    const timeoffDetails = card.querySelector('.timeoff-body').closest('details');
-    let timeoffLoaded = false;
-    timeoffDetails.addEventListener('toggle', async () => {
-      if (timeoffDetails.open && !timeoffLoaded) {
-        timeoffLoaded = true;
-        await renderTimeOff(s.staffId, card.querySelector('.timeoff-body'));
-      }
-    });
-
-    list.appendChild(card);
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'staff-tab' + (s.staffId === selectedStaffId ? ' selected' : '') + (s.isActive ? '' : ' inactive');
+    tab.innerHTML = `<span class="avatar">${avatarInner}</span>${s.displayName}`;
+    tab.onclick = () => { selectedStaffId = s.staffId; renderTabs(); renderStaffDetail(); };
+    tabs.appendChild(tab);
   }
+
+  const addTab = document.createElement('button');
+  addTab.type = 'button';
+  addTab.className = 'staff-tab add-new' + (selectedStaffId === 'new' ? ' selected' : '');
+  addTab.textContent = '+ Add new stylist';
+  addTab.onclick = () => { selectedStaffId = 'new'; renderTabs(); renderStaffDetail(); };
+  tabs.appendChild(addTab);
+}
+
+function renderStaffDetail() {
+  const detail = document.getElementById('staffDetail');
+  detail.innerHTML = '';
+
+  if (selectedStaffId === 'new') {
+    detail.appendChild(renderAddStaffForm());
+    return;
+  }
+
+  const s = staff.find(st => st.staffId === selectedStaffId);
+  if (!s) return; // nothing to show — e.g. the last stylist just got removed from the list
+
+  const card = document.createElement('div');
+  card.className = 'card staff-card' + (s.isActive ? '' : ' inactive');
+  card.style.cssText = 'flex-direction:column;align-items:stretch;';
+
+  const initials = (s.displayName || '?').slice(0, 2).toUpperCase();
+  const avatarInner = s.photoUrl
+    ? `<img src="${s.photoUrl}" alt="${s.displayName}" onerror="this.outerHTML='${initials}'">`
+    : initials;
+
+  card.innerHTML = `
+    <div class="row1">
+      <div class="avatar">${avatarInner}</div>
+      <div class="grow">
+        <div class="card-title">${s.displayName}</div>
+        <div class="card-sub">${s.email || 'No email on file'}</div>
+      </div>
+      <span class="badge ${s.isActive ? 'active' : ''}">${s.isActive ? 'Active' : 'Inactive'}</span>
+    </div>
+    <div class="field-inline"><label>Name</label><input class="f-name" value="${s.displayName}"></div>
+    <div class="field-inline"><label>Email</label><input class="f-email" type="email" value="${s.email || ''}"></div>
+    <div class="field-inline"><label>Bio</label><textarea class="f-bio" rows="2">${s.bio || ''}</textarea></div>
+    <div class="field-inline">
+      <label>Photo</label>
+      <div>
+        <input type="file" class="f-photo" accept="image/jpeg,image/png,image/webp">
+        ${s.photoUrl ? '<button type="button" class="pill-btn remove-photo-btn" style="margin-left:8px;padding:4px 12px;font-size:0.8rem;">Remove photo</button>' : ''}
+      </div>
+    </div>
+    <div class="actions" style="margin-left:0;padding-left:0;">
+      <button class="pill-btn save-btn">Save details</button>
+      <button class="pill-btn toggle-btn" style="${s.isActive ? 'border-color:#a3241f;color:#a3241f;' : ''}">
+        ${s.isActive ? 'Deactivate' : 'Reactivate'}
+      </button>
+      <span class="row-note"></span>
+    </div>
+    <details class="admin-details">
+      <summary>Services this stylist offers</summary>
+      <div class="services-body"></div>
+    </details>
+    <details class="admin-details">
+      <summary>Calendar connection</summary>
+      <div class="calendar-body"></div>
+    </details>
+    <details class="admin-details">
+      <summary>Time off</summary>
+      <div class="timeoff-body"></div>
+    </details>
+  `;
+
+  const note = card.querySelector('.row-note');
+
+  const photoInput = card.querySelector('.f-photo');
+  photoInput.onchange = async () => {
+    const file = photoInput.files[0];
+    if (!file) return;
+    note.textContent = 'Uploading photo…'; note.style.color = 'var(--muted)';
+    try {
+      const formData = new FormData();
+      formData.append('photo', file);
+      const r = await fetch(`/api/admin/staff/${s.staffId}/photo`, { method: 'POST', body: formData });
+      if (r.status === 401) {
+        location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname);
+        return;
+      }
+      if (!r.ok) throw new Error(await r.text());
+      await loadStaff();
+    } catch (err) {
+      note.textContent = 'Failed to upload photo: ' + err.message; note.style.color = '#a3241f';
+    }
+  };
+
+  const removePhotoBtn = card.querySelector('.remove-photo-btn');
+  if (removePhotoBtn) {
+    removePhotoBtn.onclick = async () => {
+      note.textContent = 'Removing…'; note.style.color = 'var(--muted)';
+      try {
+        await api(`/api/admin/staff/${s.staffId}/photo`, { method: 'DELETE' });
+        await loadStaff();
+      } catch (err) {
+        note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+      }
+    };
+  }
+
+  card.querySelector('.save-btn').onclick = async () => {
+    const displayName = card.querySelector('.f-name').value.trim();
+    const email = card.querySelector('.f-email').value.trim() || null;
+    const bio = card.querySelector('.f-bio').value.trim() || null;
+    if (!displayName) { note.textContent = 'Name is required.'; note.style.color = '#a3241f'; return; }
+    note.textContent = 'Saving…'; note.style.color = 'var(--muted)';
+    try {
+      await api(`/api/admin/staff/${s.staffId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName, email, bio, isActive: s.isActive }),
+      });
+      note.textContent = 'Saved ✓'; note.style.color = '#1a7a3c';
+      await loadStaff(); // refreshes the tab label/avatar in case name or photo-linked fields changed
+    } catch (err) {
+      note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+    }
+  };
+
+  card.querySelector('.toggle-btn').onclick = async () => {
+    const displayName = card.querySelector('.f-name').value.trim() || s.displayName;
+    const email = card.querySelector('.f-email').value.trim() || null;
+    const bio = card.querySelector('.f-bio').value.trim() || null;
+    try {
+      await api(`/api/admin/staff/${s.staffId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName, email, bio, isActive: !s.isActive }),
+      });
+      await loadStaff();
+    } catch (err) {
+      note.textContent = 'Failed: ' + err.message; note.style.color = '#a3241f';
+    }
+  };
+
+  const servicesDetails = card.querySelector('.services-body').closest('details');
+  let servicesLoaded = false;
+  servicesDetails.addEventListener('toggle', async () => {
+    if (servicesDetails.open && !servicesLoaded) {
+      servicesLoaded = true;
+      await renderServiceCheckboxes(s.staffId, card.querySelector('.services-body'));
+    }
+  });
+
+  const calendarDetails = card.querySelector('.calendar-body').closest('details');
+  let calendarLoaded = false;
+  calendarDetails.addEventListener('toggle', async () => {
+    if (calendarDetails.open && !calendarLoaded) {
+      calendarLoaded = true;
+      await renderCalendarSection(s.staffId, card.querySelector('.calendar-body'));
+    }
+  });
+  // Coming back from a Google/Microsoft OAuth redirect (see autoOpenCalendarForStaffId below) —
+  // open this section automatically so the just-connected result is immediately visible instead
+  // of requiring another click.
+  if (autoOpenCalendarForStaffId === s.staffId) {
+    autoOpenCalendarForStaffId = null;
+    calendarDetails.open = true; // fires the 'toggle' listener above, which lazy-loads it
+  }
+
+  const timeoffDetails = card.querySelector('.timeoff-body').closest('details');
+  let timeoffLoaded = false;
+  timeoffDetails.addEventListener('toggle', async () => {
+    if (timeoffDetails.open && !timeoffLoaded) {
+      timeoffLoaded = true;
+      await renderTimeOff(s.staffId, card.querySelector('.timeoff-body'));
+    }
+  });
+
+  detail.appendChild(card);
+}
+
+// ── Calendar connection ─────────────────────────────────────────────────
+// Folded in from the old admin.html — same per-stylist scope as services/time off above, just a
+// different kind of setting. The connect buttons do a full-page redirect out to Google/Microsoft's
+// OAuth consent screen and back (see /api/calendar/{provider}/callback in Program.cs), which is
+// why this can't be a pure fetch() like everything else on this page.
+
+async function selectCalendar(provider, staffId, selectEl, noteEl) {
+  const calendarId = selectEl.value;
+  noteEl.textContent = 'Saving…';
+  try {
+    await api(`/api/calendar/${provider}/select`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ staffId, calendarId }),
+    });
+    noteEl.textContent = 'Saved ✓';
+  } catch (err) {
+    noteEl.textContent = 'Failed to save: ' + err.message;
+  }
+}
+
+async function renderCalendarPicker(provider, staffId, container) {
+  const data = await api(`/api/calendar/${provider}/calendars?staffId=${staffId}`);
+  const calendars = data.calendars ?? data.Calendars ?? [];
+  const selectedId = data.selectedCalendarId ?? data.SelectedCalendarId;
+
+  const wrap = document.createElement('div');
+  wrap.style.marginTop = '6px';
+
+  const select = document.createElement('select');
+  select.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--border);margin-right:8px;';
+  for (const c of calendars) {
+    const id = c.id ?? c.Id;
+    const name = c.name ?? c.Name;
+    const isDefault = c.isDefault ?? c.IsDefault;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = name + (isDefault ? ' (default)' : '');
+    if (id === selectedId || (!selectedId && isDefault)) opt.selected = true;
+    select.appendChild(opt);
+  }
+
+  const savedNote = document.createElement('span');
+  savedNote.className = 'status-ok';
+  savedNote.style.marginLeft = '8px';
+  savedNote.textContent = selectedId ? 'Saved ✓' : '(none selected — falls back to default)';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'pill-btn';
+  saveBtn.textContent = 'Use this calendar';
+  saveBtn.onclick = () => selectCalendar(provider, staffId, select, savedNote);
+
+  wrap.appendChild(select);
+  wrap.appendChild(saveBtn);
+  wrap.appendChild(savedNote);
+  container.appendChild(wrap);
+}
+
+async function renderCalendarSection(staffId, container) {
+  container.innerHTML = 'Loading…';
+  const status = await api(`/api/calendar/status?staffId=${staffId}`);
+  const connectedProviders = status.map(c => c.provider ?? c.Provider);
+
+  container.innerHTML = `
+    <div class="provider-row">
+      <button type="button" class="pill-btn" id="connect-google-${staffId}">
+        ${connectedProviders.includes('Google') ? 'Reconnect Google' : 'Connect Google'}
+      </button>
+      <button type="button" class="pill-btn" id="connect-ms-${staffId}">
+        ${connectedProviders.includes('Microsoft') ? 'Reconnect Outlook' : 'Connect Outlook'}
+      </button>
+    </div>
+    <div id="cal-body-${staffId}"></div>
+  `;
+  container.querySelector(`#connect-google-${staffId}`).onclick =
+    () => location.href = `/api/calendar/Google/connect?staffId=${staffId}`;
+  container.querySelector(`#connect-ms-${staffId}`).onclick =
+    () => location.href = `/api/calendar/Microsoft/connect?staffId=${staffId}`;
+
+  const body = container.querySelector(`#cal-body-${staffId}`);
+  for (const c of status) {
+    const provider = c.provider ?? c.Provider;
+    const email = c.externalAccountEmail ?? c.ExternalAccountEmail ?? 'unknown account';
+    const note = document.createElement('div');
+    note.className = 'status-ok';
+    note.textContent = `✓ ${provider} connected (${email}) — pick which calendar to use:`;
+    body.appendChild(note);
+    await renderCalendarPicker(provider, staffId, body);
+  }
+}
+
+function renderAddStaffForm() {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.cssText = 'flex-direction:column;align-items:stretch;';
+  card.innerHTML = `
+    <div class="field-inline">
+      <label for="new-name">Name</label>
+      <input id="new-name" placeholder="Full name">
+    </div>
+    <div class="field-inline">
+      <label for="new-email">Email</label>
+      <input id="new-email" type="email" placeholder="optional">
+    </div>
+    <div class="field-inline">
+      <label for="new-bio">Bio</label>
+      <textarea id="new-bio" rows="2" placeholder="optional"></textarea>
+    </div>
+    <div class="actions" style="margin-left:0;padding-left:0;">
+      <button class="pill-btn primary" id="addStaffBtn">Add stylist</button>
+    </div>
+  `;
+
+  card.querySelector('#addStaffBtn').onclick = async () => {
+    const displayName = card.querySelector('#new-name').value.trim();
+    const email = card.querySelector('#new-email').value.trim() || null;
+    const bio = card.querySelector('#new-bio').value.trim() || null;
+    if (!displayName) { banner('Name is required.', true); return; }
+    try {
+      const created = await api('/api/admin/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName, email, bio }),
+      });
+      banner(`Added ${displayName}. Don't forget to pick which services they offer.`);
+      // Jump straight to the new stylist's tab instead of leaving the add-new form open —
+      // picking services is the very next thing anyone will want to do.
+      selectedStaffId = created?.staffId ?? created?.StaffId ?? null;
+      await loadStaff();
+    } catch (err) {
+      banner('Failed to add stylist: ' + err.message, true);
+    }
+  };
+
+  return card;
 }
 
 async function renderServiceCheckboxes(staffId, container) {
@@ -389,28 +603,20 @@ async function renderTimeOff(staffId, container) {
   container.appendChild(actions);
 }
 
-document.getElementById('addStaffBtn').onclick = async () => {
-  const displayName = document.getElementById('new-name').value.trim();
-  const email = document.getElementById('new-email').value.trim() || null;
-  const bio = document.getElementById('new-bio').value.trim() || null;
-  if (!displayName) { banner('Name is required.', true); return; }
-  try {
-    await api('/api/admin/staff', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ displayName, email, bio }),
-    });
-    document.getElementById('new-name').value = '';
-    document.getElementById('new-email').value = '';
-    document.getElementById('new-bio').value = '';
-    banner(`Added ${displayName}. Don't forget to pick which services they offer below.`);
-    await loadStaff();
-  } catch (err) {
-    banner('Failed to add stylist: ' + err.message, true);
-  }
-};
-
 async function init() {
+  // Landed here from /api/calendar/{provider}/callback in Program.cs after connecting a
+  // calendar — pre-select that stylist's tab and auto-open their Calendar connection section
+  // instead of leaving the just-connected result a click away.
+  const params = new URLSearchParams(location.search);
+  const connectedProvider = params.get('connected');
+  const connectedStaffId = params.get('staffId');
+  if (connectedProvider && connectedStaffId) {
+    selectedStaffId = parseInt(connectedStaffId, 10);
+    autoOpenCalendarForStaffId = selectedStaffId;
+    banner(`Connected ${connectedProvider} calendar.`);
+    history.replaceState(null, '', location.pathname); // don't repeat the banner on refresh
+  }
+
   try {
     await loadCatalogue();
     await loadStaff();

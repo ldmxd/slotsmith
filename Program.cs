@@ -591,9 +591,8 @@ app.MapGet("/api/admin/business-hours", async (string date, BookingRepository re
 }).RequireAuthorization();
 
 // ── Service admin (Angelo editing prices / durations) ──────────────────────
-// No auth on this yet — same known simplification as admin.html's calendar linking.
-// Fine for a demo on an unlisted URL; flagged in README as something to lock down
-// before this becomes a real multi-tenant product.
+// No auth on this yet. Fine for a demo on an unlisted URL; flagged in README as something to
+// lock down before this becomes a real multi-tenant product.
 
 app.MapGet("/api/admin/services", async (BookingRepository repo) =>
 {
@@ -922,7 +921,7 @@ app.MapGet("/api/calendar/{provider}/callback", async (string provider, string c
     var cal = calendarFactory.Get(provider);
     var connection = await cal.ExchangeCodeAsync(staffId, code);
     await repo.UpsertCalendarConnectionAsync(connection);
-    return Results.Redirect($"/admin.html?connected={provider}&staffId={staffId}");
+    return Results.Redirect($"/staff-admin.html?connected={provider}&staffId={staffId}");
 }).RequireAuthorization();
 
 app.MapGet("/api/calendar/status", async (int staffId, BookingRepository repo) =>

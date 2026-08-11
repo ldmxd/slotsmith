@@ -2,147 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="0; url=/staff-admin.html">
 <title>SlotSmith — Staff calendar setup</title>
-<link rel="stylesheet" href="booking.css">
-<style>
-  body { padding-bottom: 40px; }
-  .provider-row { display: flex; gap: 10px; margin-top: 10px; }
-  .status-ok { color: #1a7a3c; font-size: 0.85rem; margin-top: 6px; }
-</style>
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="/index.html"><span class="brand-mark"></span>SlotSmith</a>
-  <div id="adminNav"></div>
-</header>
-<main>
-  <h1 class="step-title">Connect your calendar</h1>
-  <p style="margin:0 20px;color:var(--muted)">
-    Link your Google or Outlook calendar so the booking system can see your existing
-    appointments and avoid double-booking, and add confirmed bookings straight to your calendar.
-  </p>
-  <div id="banner"></div>
-  <div id="staffList"></div>
-</main>
-<script src="admin-nav.js"></script>
-<script>
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  if (r.status === 401) {
-    location.href = '/admin-login.html?next=' + encodeURIComponent(location.pathname + location.search);
-    return new Promise(() => {}); // page is navigating away — never resolve
-  }
-  const raw = await r.text();
-  if (!r.ok) throw new Error(raw || r.statusText);
-  return raw ? JSON.parse(raw) : null; // Results.Ok() with no body comes back as 200 + empty string, not 204
-}
-
-async function selectCalendar(provider, staffId, selectEl, noteEl) {
-  const calendarId = selectEl.value;
-  noteEl.textContent = 'Saving…';
-  try {
-    await api(`/api/calendar/${provider}/select`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ staffId, calendarId }),
-    });
-    noteEl.textContent = 'Saved ✓';
-  } catch (err) {
-    noteEl.textContent = 'Failed to save: ' + err.message;
-  }
-}
-
-async function renderCalendarPicker(provider, staffId, container) {
-  const data = await api(`/api/calendar/${provider}/calendars?staffId=${staffId}`);
-  const calendars = data.calendars ?? data.Calendars ?? [];
-  const selectedId = data.selectedCalendarId ?? data.SelectedCalendarId;
-
-  const wrap = document.createElement('div');
-  wrap.style.marginTop = '6px';
-
-  const select = document.createElement('select');
-  select.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--border);margin-right:8px;';
-  for (const c of calendars) {
-    const id = c.id ?? c.Id;
-    const name = c.name ?? c.Name;
-    const isDefault = c.isDefault ?? c.IsDefault;
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = name + (isDefault ? ' (default)' : '');
-    if (id === selectedId || (!selectedId && isDefault)) opt.selected = true;
-    select.appendChild(opt);
-  }
-
-  const savedNote = document.createElement('span');
-  savedNote.className = 'status-ok';
-  savedNote.style.marginLeft = '8px';
-  savedNote.textContent = selectedId ? 'Saved ✓' : '(none selected — falls back to default)';
-
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'pill-btn';
-  saveBtn.textContent = 'Use this calendar';
-  saveBtn.onclick = () => selectCalendar(provider, staffId, select, savedNote);
-
-  wrap.appendChild(select);
-  wrap.appendChild(saveBtn);
-  wrap.appendChild(savedNote);
-  container.appendChild(wrap);
-}
-
-async function load() {
-  const staff = await api('/api/staff');
-  const params = new URLSearchParams(location.search);
-  if (params.get('connected')) {
-    document.getElementById('banner').innerHTML =
-      `<div class="banner">Connected ${params.get('connected')} calendar for staff #${params.get('staffId')}.</div>`;
-  }
-
-  const list = document.getElementById('staffList');
-  for (const s of staff) {
-    const id = s.staffId ?? s.StaffId;
-    const name = s.displayName ?? s.DisplayName;
-    const photoUrl = s.photoUrl ?? s.PhotoUrl;
-    const status = await api(`/api/calendar/status?staffId=${id}`);
-
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.style.flexDirection = 'column';
-    card.style.alignItems = 'stretch';
-    const connectedProviders = status.map(c => c.provider ?? c.Provider);
-    const avatarInner = photoUrl
-      ? `<img src="${photoUrl}" alt="${name}" onerror="this.outerHTML='${name.slice(0,2).toUpperCase()}'">`
-      : name.slice(0,2).toUpperCase();
-    card.innerHTML = `
-      <div style="display:flex;align-items:center;gap:14px;">
-        <div class="avatar">${avatarInner}</div>
-        <div class="card-title">${name}</div>
-      </div>
-      <div class="provider-row">
-        <button class="pill-btn" onclick="location.href='/api/calendar/Google/connect?staffId=${id}'">
-          ${connectedProviders.includes('Google') ? 'Reconnect Google' : 'Connect Google'}
-        </button>
-        <button class="pill-btn" onclick="location.href='/api/calendar/Microsoft/connect?staffId=${id}'">
-          ${connectedProviders.includes('Microsoft') ? 'Reconnect Outlook' : 'Connect Outlook'}
-        </button>
-      </div>
-      <div id="cal-body-${id}"></div>
-    `;
-    list.appendChild(card);
-
-    const body = card.querySelector(`#cal-body-${id}`);
-    for (const c of status) {
-      const provider = c.provider ?? c.Provider;
-      const email = c.externalAccountEmail ?? c.ExternalAccountEmail ?? 'unknown account';
-      const note = document.createElement('div');
-      note.className = 'status-ok';
-      note.textContent = `✓ ${provider} connected (${email}) — pick which calendar to use:`;
-      body.appendChild(note);
-      await renderCalendarPicker(provider, id, body);
-    }
-  }
-}
-load();
-</script>
+<!-- Calendar connection moved into staff-admin.html (per-stylist detail pane, same place as
+     services and time off) since it's the same kind of per-stylist data. Kept as a redirect
+     rather than deleting the file so any old bookmarks/links to /admin.html still land somewhere
+     useful, and so the OAuth callback in Program.cs has one less place it could send someone if
+     it's ever reverted. Forwards query params (?connected=...&staffId=...) along too. -->
+<script>location.replace('/staff-admin.html' + location.search);</script>
+<p>Calendar setup has moved to <a href="/staff-admin.html">Staff</a>.</p>
 </body>
 </html>

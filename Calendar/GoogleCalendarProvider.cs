@@ -30,7 +30,7 @@ public class GoogleCalendarProvider : ICalendarProvider
     // calendar.calendarlist.readonly: lets ListCalendarsAsync show the account's calendar names
     // so the staff member can pick which one to use — read-only, no event content access.
     // userinfo.email: just so GetAccountEmailAsync can show which account is connected in
-    // admin.html instead of "unknown account" — doesn't grant anything beyond reading the address.
+    // staff-admin.html instead of "unknown account" — doesn't grant anything beyond reading the address.
     // None of these is calendar.readonly, which would grant read access to every calendar's
     // actual event content — broader than anything this app does.
     private const string Scope = "https://www.googleapis.com/auth/calendar.events "
@@ -107,7 +107,7 @@ public class GoogleCalendarProvider : ICalendarProvider
             RefreshTokenEncrypted: _protector.Protect(token.RefreshToken ?? ""),
             TokenExpiresUtc: DateTime.UtcNow.AddSeconds(token.ExpiresIn),
             ConnectedAt: DateTime.UtcNow,
-            CalendarId: null);   // defaults to "primary" until the staff member picks one via admin.html
+            CalendarId: null);   // defaults to "primary" until the staff member picks one via staff-admin.html
     }
 
     private async Task<string?> GetAccountEmailAsync(string accessToken, CancellationToken ct)

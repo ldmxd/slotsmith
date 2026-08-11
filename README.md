@@ -65,10 +65,9 @@ SlotSmith.Api/
 ├── wwwroot/
 │   ├── booking.html/.css/.js       # Customer-facing booking flow (services → staff → time → confirm)
 │   ├── admin-login.html            # Shared-password login for the admin pages below
-│   ├── bookings-admin.html         # Search bookings by client, hand off to manage-booking.html
-│   ├── admin.html                  # Staff calendar-linking page
+│   ├── bookings-admin.html         # Search bookings by client + day-view calendar, hand off to manage-booking.html
 │   ├── services-admin.html         # Price/duration editor + once-a-year CPI bulk price rise
-│   ├── staff-admin.html            # Add/deactivate stylists, assign services, time off
+│   ├── staff-admin.html            # Add/deactivate stylists, assign services, calendar linking, time off
 │   └── manage-booking.html         # Customer self-service: view / reschedule / cancel via emailed link
 ├── Dockerfile                      # ASP.NET 8, listens on 8080
 └── README.md
@@ -88,8 +87,8 @@ SlotSmith.Api/
   no-show protection. This doesn't yet — worth discussing with the salon owner what he
   actually needs there before assuming "no Fresha fee" is the whole pitch.
 - **Single venue, single timezone** (`Australia/Sydney` hardcoded in `Program.cs`).
-- **Admin auth is a single shared password, not per-person accounts.** `admin.html`,
-  `services-admin.html`, `staff-admin.html`, and their backing `/api/admin/*` +
+- **Admin auth is a single shared password, not per-person accounts.** `services-admin.html`,
+  `staff-admin.html`, and their backing `/api/admin/*` +
   `/api/calendar/*` endpoints all require logging in at `/admin-login.html` first (cookie-based,
   30-day sliding expiry). One password for everyone who needs admin access (Mark, Angelo) —
   fine for a two-person demo, not how you'd do it once there's a real staff roster with
@@ -167,19 +166,27 @@ dotnet run
 # admin pages: http://localhost:5080/admin-login.html
 ```
 
-Calendar linking (`admin.html`) will fail until you've registered OAuth apps — see below.
+Calendar linking (`staff-admin.html`) will fail until you've registered OAuth apps — see below.
 Everything else (browsing services, picking a time against business hours + existing bookings)
 works without it.
 
 ## Admin login
 
-`admin.html`, `services-admin.html`, and `staff-admin.html` (calendar linking, pricing, staff)
+`services-admin.html` and `staff-admin.html` (pricing, and staff including calendar linking)
 all sit behind `/admin-login.html` — a single shared password, checked against `Admin:Password`
 (see setup above), backed by a cookie (`slotsmith_admin`, 30-day sliding expiry). There's no
 per-person login and no password reset flow; if the password needs to change, update the config
 value and everyone logs in again. Good enough for the two people (Mark, Angelo) who need access
 during the demo — revisit if this becomes a real multi-tenant product with different staff
 needing different permissions.
+
+Calendar connection used to be its own page (`admin.html`) — it's since been folded into
+`staff-admin.html` as a third per-stylist `<details>` section alongside services and time off,
+since it's the same kind of per-stylist setting. `admin.html` still exists as a redirect stub (so
+any old bookmarks land somewhere useful) but isn't linked from anywhere. The OAuth callback in
+`Program.cs` (`/api/calendar/{provider}/callback`) redirects to
+`/staff-admin.html?connected={provider}&staffId={id}`, which pre-selects that stylist's tab and
+auto-opens their Calendar connection section on load.
 
 ## Google Calendar setup
 
@@ -231,7 +238,7 @@ SDK), just a different `Resend:ApiKey` / `FromEmail` / `FromName` config.
 
 ## Testing both providers side by side
 
-Since staff link their own calendar individually (`/admin.html`), you can genuinely test both
+Since staff link their own calendar individually (`/staff-admin.html`), you can genuinely test both
 in the same running instance: connect one test staff member's Google calendar and another's
 Outlook calendar, then book against both from `/booking.html` and confirm events land in the
 right place and busy times from each are respected.
@@ -240,7 +247,7 @@ right place and busy times from each are respected.
 
 An account can have more than one calendar (a personal one and a separate work one, say), so
 `GetBusyTimesAsync`/`CreateEventAsync` don't just assume the account's default. After connecting
-in `/admin.html`, a dropdown of that account's calendars appears — pick the right one and hit
+in `/staff-admin.html`, a dropdown of that account's calendars appears — pick the right one and hit
 "Use this calendar". Until a choice is saved, it falls back to the provider's default calendar
 (`primary` for Google, the mailbox's default for Outlook), so connecting still works immediately
 even if you skip this step.
@@ -398,7 +405,7 @@ Both `-v` mounts matter. Staff photos uploaded via `staff-admin.html` get writte
 again with nothing in that folder. `keys` holds the ASP.NET Core Data Protection keys
 (`Program.cs`: `PersistKeysToFileSystem`) used to encrypt calendar OAuth tokens at rest — without
 that mount, every redeploy generates a fresh key and silently breaks decryption of any
-already-connected staff calendar (they'd need to reconnect via `admin.html`).
+already-connected staff calendar (they'd need to reconnect via `staff-admin.html`).
 
 New server block, `/etc/nginx/sites-available/slotsmith`:
 
