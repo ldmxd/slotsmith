@@ -214,11 +214,36 @@ async function loadAvailability() {
     staffId: state.selectedStaffId || null,
     date: state.selectedDate,
   };
-  state.slots = await api('/api/availability', {
+  const rawSlots = await api('/api/availability', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  // "No preference" queries every eligible stylist's own availability, so /api/availability
+  // returns one row per stylist who's free at a given clock time — the same 9:15 AM can come
+  // back 3 times if 3 stylists are open then. The customer said they don't care who does it, so
+  // showing three separate 9:15 AM buttons is just confusing. Merge same-time slots into one
+  // button here; which actual stylist gets booked is picked once, when the button is clicked
+  // (see renderTimeStep) — a specific stylist's own availability isn't touched.
+  state.slots = state.selectedStaffId === 0 ? mergeSlotsForNoPreference(rawSlots) : rawSlots;
+}
+
+function mergeSlotsForNoPreference(rawSlots) {
+  const byStart = new Map();
+  for (const slot of rawSlots) {
+    const startUtc = slot.startUtc ?? slot.StartUtc;
+    if (!byStart.has(startUtc)) {
+      byStart.set(startUtc, {
+        startUtc,
+        endUtc: slot.endUtc ?? slot.EndUtc,
+        totalPriceCents: slot.totalPriceCents ?? slot.TotalPriceCents,
+        totalDurationMinutes: slot.totalDurationMinutes ?? slot.TotalDurationMinutes,
+        staffIds: [],
+      });
+    }
+    byStart.get(startUtc).staffIds.push(slot.staffId ?? slot.StaffId);
+  }
+  return Array.from(byStart.values()).sort((a, b) => new Date(a.startUtc) - new Date(b.startUtc));
 }
 
 // Inline month calendar for picking a date, instead of the native browser
@@ -349,7 +374,16 @@ function renderTimeStep() {
     const btn = document.createElement('button');
     btn.className = 'slot-btn' + (state.selectedSlot === slot ? ' selected' : '');
     btn.textContent = start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    btn.addEventListener('click', () => { state.selectedSlot = slot; render(); });
+    btn.addEventListener('click', () => {
+      // Merged "no preference" slot — pick which of the free stylists actually gets this
+      // booking now, once, so the same choice shows on the confirm screen and gets sent to
+      // POST /api/bookings. Mutating the slot object in place (not spreading a copy) keeps the
+      // `state.selectedSlot === slot` identity check above working after this re-renders.
+      if (slot.staffIds && slot.staffId == null)
+        slot.staffId = slot.staffIds[Math.floor(Math.random() * slot.staffIds.length)];
+      state.selectedSlot = slot;
+      render();
+    });
     grid.appendChild(btn);
   }
   el.appendChild(grid);
