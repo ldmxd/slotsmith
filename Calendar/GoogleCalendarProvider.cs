@@ -15,7 +15,7 @@ namespace SlotSmith.Api.Calendar;
 ///   1. Create a project, enable the Google Calendar API.
 ///   2. OAuth consent screen — External, Testing mode is fine for a demo (up to 100 test users).
 ///   3. Credentials → OAuth client ID → Web application.
-///      Redirect URI: https://mihoknows.com.au/api/calendar/google/callback
+///      Redirect URI: https://slotsmith.com.au/api/calendar/Google/callback
 ///   4. Put the client id/secret in appsettings / env vars (see appsettings.json).
 /// </summary>
 public class GoogleCalendarProvider : ICalendarProvider

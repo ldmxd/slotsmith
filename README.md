@@ -196,7 +196,7 @@ auto-opens their Calendar connection section on load.
    fine for a demo (up to 100 test users, no Google review needed). Add your own Google
    account and the salon owner's as test users.
 3. **Credentials** → Create Credentials → OAuth client ID → Web application.
-   Authorized redirect URI: `https://booking.mihoknows.com.au/api/calendar/Google/callback`
+   Authorized redirect URI: `https://slotsmith.com.au/api/calendar/Google/callback`
    (or `https://localhost:5001/api/calendar/Google/callback` for local testing).
 4. Put the client ID/secret in `appsettings.Development.json` locally, or as environment
    variables in production (`Calendar__Google__ClientId`, `Calendar__Google__ClientSecret` —
@@ -209,7 +209,7 @@ auto-opens their Calendar connection section on load.
    Supported account types: **"Accounts in any organizational directory and personal
    Microsoft accounts"** — this matters if the stylist uses a plain outlook.com/hotmail
    account rather than a work 365 tenant.
-   Redirect URI (Web): `https://booking.mihoknows.com.au/api/calendar/Microsoft/callback`
+   Redirect URI (Web): `https://slotsmith.com.au/api/calendar/Microsoft/callback`
 2. **Certificates & secrets** → New client secret → copy the value immediately (shown once).
 3. **API permissions** → Add a permission → Microsoft Graph → Delegated permissions →
    `Calendars.ReadWrite`, `offline_access`, `User.Read`. Personal Microsoft accounts don't need

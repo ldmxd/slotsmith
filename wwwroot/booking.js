@@ -442,6 +442,14 @@ function renderDetailsStep() {
 }
 
 async function submitBooking() {
+  // Guards against double-tap / double-click firing two POST /api/bookings requests for the
+  // same slot (this actually happened — see server-side overlap check in Program.cs for the
+  // authoritative fix; this is just defense in depth so most double-taps never reach the server).
+  if (continueBtn.disabled) return;
+  continueBtn.disabled = true;
+  const originalLabel = continueBtn.textContent;
+  continueBtn.textContent = 'Booking…';
+
   const staffIdForSlot = state.selectedSlot.staffId ?? state.selectedSlot.StaffId;
   const honeypotEl = document.getElementById('field-hp');
   const body = {
@@ -464,6 +472,8 @@ async function submitBooking() {
     goToStep('confirmed');
   } catch (err) {
     alert('Something went wrong booking that slot: ' + err.message);
+    continueBtn.disabled = false;
+    continueBtn.textContent = originalLabel;
   }
 }
 

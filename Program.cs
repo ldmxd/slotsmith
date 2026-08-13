@@ -288,28 +288,51 @@ app.MapPost("/api/bookings", async (CreateBookingRequest req, BookingRepository 
     if (timeOffConflict)
         return Results.BadRequest("That stylist isn't available at that time. Please pick a different time or stylist.");
 
+    // Same "trusts stale client slots" gap as above, but for the stylist's own existing bookings
+    // rather than time off — without this, two near-simultaneous requests for the same slot (e.g.
+    // a double-tap on "Confirm booking" on mobile, which is exactly what happened in testing) both
+    // pass through and create two separate confirmed bookings for the identical time. This closes
+    // the window for any two requests that aren't literally simultaneous at the DB level; a fully
+    // airtight fix would need a DB-level unique constraint + transaction, which isn't in place yet.
+    var bookingConflict = (await repo.GetExistingBookingsAsync(chosen.StaffId, req.StartUtc, endUtc)).Any();
+    if (bookingConflict)
+        return Results.BadRequest("That time was just booked by someone else. Please pick a different time.");
+
     var customerId = await repo.CreateCustomerAsync(req.CustomerName, req.CustomerEmail, req.CustomerPhone);
 
     string? calendarProvider = null;
     string? calendarEventId = null;
 
+    // Wrapped in try/catch so a broken/expired calendar connection (expired token, revoked access,
+    // Graph/Google API hiccup) doesn't throw an unhandled exception and 500 the whole booking with
+    // an empty response body (booking.js shows that as "Something went wrong booking that slot: "
+    // with nothing after the colon — this is what actually happened in testing). Same graceful-
+    // degradation pattern already used in /api/availability and the reschedule validation endpoint:
+    // log it, skip the calendar event, let the booking itself still succeed.
     foreach (var providerKey in calendarFactory.SupportedProviders)
     {
-        var connection = await repo.GetCalendarConnectionAsync(chosen.StaffId, providerKey);
-        if (connection is null) continue;
-
-        var provider = calendarFactory.Get(providerKey);
-        if (connection.TokenExpiresUtc < DateTime.UtcNow.AddMinutes(2))
+        try
         {
-            connection = await provider.RefreshTokenAsync(connection);
-            await repo.UpsertCalendarConnectionAsync(connection);
-        }
+            var connection = await repo.GetCalendarConnectionAsync(chosen.StaffId, providerKey);
+            if (connection is null) continue;
 
-        var title = $"{req.CustomerName} — booking";
-        var description = string.Join(", ", req.Items.Select(i => i.ServiceId)); // resolved to names client-side / in a fuller version
-        calendarEventId = await provider.CreateEventAsync(connection, title, description, req.StartUtc, endUtc);
-        calendarProvider = providerKey;
-        break; // a staff member only has one calendar connected in practice; first match wins
+            var provider = calendarFactory.Get(providerKey);
+            if (connection.TokenExpiresUtc < DateTime.UtcNow.AddMinutes(2))
+            {
+                connection = await provider.RefreshTokenAsync(connection);
+                await repo.UpsertCalendarConnectionAsync(connection);
+            }
+
+            var title = $"{req.CustomerName} — booking";
+            var description = string.Join(", ", req.Items.Select(i => i.ServiceId)); // resolved to names client-side / in a fuller version
+            calendarEventId = await provider.CreateEventAsync(connection, title, description, req.StartUtc, endUtc);
+            calendarProvider = providerKey;
+            break; // a staff member only has one calendar connected in practice; first match wins
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Calendar] Skipping {providerKey} event creation for staff {chosen.StaffId}: {ex.Message}");
+        }
     }
 
     var items = (await repo.GetStaffServiceBreakdownAsync(chosen.StaffId, serviceIds)).ToList();

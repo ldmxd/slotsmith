@@ -14,7 +14,7 @@ namespace SlotSmith.Api.Calendar;
 ///   1. App registrations → New registration. Supported account types: "Accounts in any
 ///      organizational directory and personal Microsoft accounts" (so it works with a
 ///      plain outlook.com/hotmail account too, not just a work 365 tenant).
-///      Redirect URI (Web): https://mihoknows.com.au/api/calendar/microsoft/callback
+///      Redirect URI (Web): https://slotsmith.com.au/api/calendar/Microsoft/callback
 ///   2. Certificates & secrets → new client secret.
 ///   3. API permissions → Microsoft Graph → Delegated → Calendars.ReadWrite, offline_access,
 ///      User.Read. Grant admin consent if the tenant requires it (personal accounts don't).
