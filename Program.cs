@@ -56,6 +56,17 @@ builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Without this, a 429 rejection has an empty response body — booking.js reads that as
+    // err.message and shows "Something went wrong booking that slot: " with nothing after the
+    // colon. That's exactly what this looked like: 5 successful test bookings, then unexplained
+    // blank errors on every attempt after — the "5 successful, then broken" pattern is this limit,
+    // not a real bug in the booking logic itself. Give it a real message instead.
+    options.OnRejected = async (ctx, ct) =>
+    {
+        ctx.HttpContext.Response.ContentType = "text/plain";
+        await ctx.HttpContext.Response.WriteAsync(
+            "You've made a few bookings recently — please wait a bit before booking again, or contact us directly.", ct);
+    };
     options.AddPolicy("bookings", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -76,7 +87,23 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 });
 app.UseRateLimiter();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    // Without this, .js/.css get served with whatever caching heuristic the browser feels like —
+    // iOS Safari in particular is known to hang onto a cached copy of a script across visits far
+    // more aggressively than Chrome/Android does, which is exactly what happened here: after
+    // deploying a booking.js fix, it showed up immediately on Android but Safari kept serving the
+    // stale pre-fix version. "no-cache" doesn't mean "don't cache" — it means "always revalidate",
+    // so the browser still sends a conditional request (using the ETag/Last-Modified that
+    // UseStaticFiles adds automatically) and gets a cheap 304 when nothing's changed, but can never
+    // silently serve a stale copy after a real deploy.
+    OnPrepareResponse = ctx =>
+    {
+        var path = ctx.File.Name;
+        if (path.EndsWith(".js") || path.EndsWith(".css"))
+            ctx.Context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate";
+    }
+});
 app.UseAuthentication();
 app.UseAuthorization();
 
